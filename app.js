@@ -90,7 +90,8 @@ const state = {
             subheadlineUnderline: false,
             subheadlineStrikethrough: false,
             subheadlineColor: '#ffffff',
-            subheadlineOpacity: 70
+            subheadlineOpacity: 70,
+            headlineSubheadlineSpacing: 0
         },
         elements: [],
         popouts: []
@@ -1927,7 +1928,8 @@ function resetStateToDefaults() {
             subheadlineUnderline: false,
             subheadlineStrikethrough: false,
             subheadlineColor: '#ffffff',
-            subheadlineOpacity: 70
+            subheadlineOpacity: 70,
+            headlineSubheadlineSpacing: 0
         }
     };
 }
@@ -2256,6 +2258,9 @@ function syncUIWithState() {
     document.getElementById('subheadline-color').value = txt.subheadlineColor;
     document.getElementById('subheadline-opacity').value = txt.subheadlineOpacity;
     document.getElementById('subheadline-opacity-value').textContent = formatValue(txt.subheadlineOpacity) + '%';
+    const spacingValue = typeof txt.headlineSubheadlineSpacing === 'number' ? txt.headlineSubheadlineSpacing : 0;
+    document.getElementById('headline-subheadline-spacing').value = spacingValue;
+    document.getElementById('headline-subheadline-spacing-value').textContent = formatValue(spacingValue) + '%';
     document.getElementById('subheadline-weight').value = txt.subheadlineWeight || '400';
     // Sync subheadline style buttons
     document.querySelectorAll('#subheadline-style button').forEach(btn => {
@@ -4526,6 +4531,13 @@ function setupEventListeners() {
         updateCanvas();
     });
 
+    document.getElementById('headline-subheadline-spacing').addEventListener('input', (e) => {
+        const value = parseInt(e.target.value) || 0;
+        setTextValue('headlineSubheadlineSpacing', value);
+        document.getElementById('headline-subheadline-spacing-value').textContent = formatValue(value) + '%';
+        updateCanvas();
+    });
+
     // Subheadline weight
     document.getElementById('subheadline-weight').addEventListener('change', (e) => {
         setTextValue('subheadlineWeight', e.target.value);
@@ -5903,6 +5915,9 @@ function updateTextUI(text) {
     document.getElementById('subheadline-color').value = text.subheadlineColor;
     document.getElementById('subheadline-opacity').value = text.subheadlineOpacity;
     document.getElementById('subheadline-opacity-value').textContent = formatValue(text.subheadlineOpacity) + '%';
+    const spacingValue = typeof text.headlineSubheadlineSpacing === 'number' ? text.headlineSubheadlineSpacing : 0;
+    document.getElementById('headline-subheadline-spacing').value = spacingValue;
+    document.getElementById('headline-subheadline-spacing-value').textContent = formatValue(spacingValue) + '%';
     document.getElementById('subheadline-weight').value = text.subheadlineWeight || '400';
     // Sync subheadline style buttons
     document.querySelectorAll('#subheadline-style button').forEach(btn => {
@@ -7305,6 +7320,10 @@ function drawTextToContext(context, dims, txt) {
             // For bottom: lastLineY is already the bottom of last line, just add gap
             currentY = lastLineY + gap;
         }
+
+        // Extra user-controlled spacing between headline and subheadline (% of canvas height)
+        const extraSpacing = typeof txt.headlineSubheadlineSpacing === 'number' ? txt.headlineSubheadlineSpacing : 0;
+        currentY += dims.height * (extraSpacing / 100);
     }
 
     // Draw subheadline (always below headline visually)
@@ -7900,6 +7919,10 @@ function drawText() {
             // For bottom: lastLineY is already the bottom of last line, just add gap
             currentY = lastLineY + gap;
         }
+
+        // Extra user-controlled spacing between headline and subheadline (% of canvas height)
+        const extraSpacing = typeof text.headlineSubheadlineSpacing === 'number' ? text.headlineSubheadlineSpacing : 0;
+        currentY += dims.height * (extraSpacing / 100);
     }
 
     // Draw subheadline (always below headline visually)
@@ -7978,6 +8001,30 @@ function roundRect(ctx, x, y, width, height, radius) {
     ctx.closePath();
 }
 
+// Break a single token (no spaces) into chunks that each fit within maxWidth.
+// Used as a fallback when a word like a long German compound is wider than the
+// available text area; otherwise centered text would clip on both sides.
+function breakSegmentToMaxWidth(ctx, segment, maxWidth) {
+    if (!segment) return [''];
+    if (ctx.measureText(segment).width <= maxWidth) return [segment];
+
+    const chunks = [];
+    let current = '';
+
+    for (const char of segment) {
+        const test = current + char;
+        if (ctx.measureText(test).width > maxWidth && current) {
+            chunks.push(current);
+            current = char;
+        } else {
+            current = test;
+        }
+    }
+
+    if (current) chunks.push(current);
+    return chunks;
+}
+
 function wrapText(ctx, text, maxWidth) {
     const lines = [];
     const rawLines = String(text).split(/\r?\n/);
@@ -7991,13 +8038,28 @@ function wrapText(ctx, text, maxWidth) {
         const words = rawLine.split(' ');
         let currentLine = '';
 
+        const pushOverflowWord = (word) => {
+            const chunks = breakSegmentToMaxWidth(ctx, word, maxWidth);
+            for (let i = 0; i < chunks.length - 1; i++) {
+                lines.push(chunks[i]);
+            }
+            currentLine = chunks[chunks.length - 1];
+        };
+
         words.forEach(word => {
             const testLine = currentLine + (currentLine ? ' ' : '') + word;
             const metrics = ctx.measureText(testLine);
 
             if (metrics.width > maxWidth && currentLine) {
                 lines.push(currentLine);
-                currentLine = word;
+                currentLine = '';
+                if (ctx.measureText(word).width > maxWidth) {
+                    pushOverflowWord(word);
+                } else {
+                    currentLine = word;
+                }
+            } else if (metrics.width > maxWidth && !currentLine) {
+                pushOverflowWord(word);
             } else {
                 currentLine = testLine;
             }
