@@ -203,9 +203,96 @@ function normalizeTextSettings(text) {
     return merged;
 }
 
+// Language used as the source of truth for linked localizations (English)
+const SOURCE_LANGUAGE = 'en';
+
+// Ensure a per-language graphics container exists on the screenshot and return it.
+// Only graphic overlays are localized; text/icon/emoji stay on screenshot.elements.
+// Shape: { linked: boolean, graphics: Array }
+function getLocalizationEntry(screenshot, lang) {
+    if (!screenshot) return null;
+    if (!screenshot.localizedElements) screenshot.localizedElements = {};
+    if (!screenshot.localizedElements[lang]) {
+        screenshot.localizedElements[lang] = { linked: true, graphics: [] };
+    }
+    const entry = screenshot.localizedElements[lang];
+    // Back-compat: earlier drafts used `elements`, migrate to `graphics`.
+    if (!Array.isArray(entry.graphics)) {
+        entry.graphics = Array.isArray(entry.elements) ? entry.elements.slice() : [];
+    }
+    delete entry.elements;
+    if (typeof entry.linked !== 'boolean') entry.linked = true;
+    return entry;
+}
+
+// A localization is "linked" when its graphic overlays should come from the
+// source (English) elements. Source language itself is always treated as linked.
+function isLocalizationLinked(screenshot, lang) {
+    if (!screenshot || !lang || lang === SOURCE_LANGUAGE) return true;
+    const entry = screenshot.localizedElements?.[lang];
+    if (!entry) return true;
+    return entry.linked !== false;
+}
+
+// Resolve which elements should render for a given screenshot + language.
+// Non-graphic elements are always shared; graphic elements switch between the
+// shared set and the localization's own graphics when the localization is unlinked.
+function getEffectiveElements(screenshot, lang) {
+    if (!screenshot) return [];
+    const useLang = lang || state.currentLanguage;
+    const base = screenshot.elements || [];
+    if (isLocalizationLinked(screenshot, useLang)) {
+        return base;
+    }
+    const entry = screenshot.localizedElements?.[useLang];
+    const localGraphics = (entry && Array.isArray(entry.graphics)) ? entry.graphics : [];
+    const nonGraphicBase = base.filter(el => el.type !== 'graphic');
+    return [...nonGraphicBase, ...localGraphics];
+}
+
+// Find the array that owns the element with the given id for the current
+// screenshot + language. Returns null if not found.
+function getOwnerArrayForElement(id) {
+    const screenshot = getCurrentScreenshot();
+    if (!screenshot) return null;
+    const base = screenshot.elements || [];
+    if (base.some(el => el.id === id)) return base;
+    const lang = state.currentLanguage;
+    if (!isLocalizationLinked(screenshot, lang)) {
+        const entry = screenshot.localizedElements?.[lang];
+        if (entry && Array.isArray(entry.graphics) && entry.graphics.some(el => el.id === id)) {
+            return entry.graphics;
+        }
+    }
+    return null;
+}
+
+// Return the array that a newly added graphic should be pushed to, respecting
+// the localization link for the current language.
+function getGraphicsTargetArray() {
+    const screenshot = getCurrentScreenshot();
+    if (!screenshot) return null;
+    const lang = state.currentLanguage;
+    if (isLocalizationLinked(screenshot, lang)) {
+        if (!Array.isArray(screenshot.elements)) screenshot.elements = [];
+        return screenshot.elements;
+    }
+    const entry = getLocalizationEntry(screenshot, lang);
+    return entry.graphics;
+}
+
+// Return the shared elements array used for all non-graphic element types.
+function getSharedElementsArray() {
+    const screenshot = getCurrentScreenshot();
+    if (!screenshot) return null;
+    if (!Array.isArray(screenshot.elements)) screenshot.elements = [];
+    return screenshot.elements;
+}
+
 function getElements() {
     const screenshot = getCurrentScreenshot();
-    return screenshot ? (screenshot.elements || []) : [];
+    if (!screenshot) return [];
+    return getEffectiveElements(screenshot, state.currentLanguage);
 }
 
 function getSelectedElement() {
@@ -310,9 +397,8 @@ function movePopout(id, direction) {
 }
 
 function addGraphicElement(img, src, name) {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot) return;
-    if (!screenshot.elements) screenshot.elements = [];
+    const elements = getGraphicsTargetArray();
+    if (!elements) return;
     const el = {
         id: crypto.randomUUID(),
         type: 'graphic',
@@ -334,7 +420,7 @@ function addGraphicElement(img, src, name) {
         frameColor: '#ffffff',
         frameScale: 100
     };
-    screenshot.elements.push(el);
+    elements.push(el);
     selectedElementId = el.id;
     updateCanvas();
     updateElementsList();
@@ -342,9 +428,8 @@ function addGraphicElement(img, src, name) {
 }
 
 function addTextElement() {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot) return;
-    if (!screenshot.elements) screenshot.elements = [];
+    const elements = getSharedElementsArray();
+    if (!elements) return;
     const el = {
         id: crypto.randomUUID(),
         type: 'text',
@@ -367,7 +452,7 @@ function addTextElement() {
         frameColor: '#ffffff',
         frameScale: 100
     };
-    screenshot.elements.push(el);
+    elements.push(el);
     selectedElementId = el.id;
     updateCanvas();
     updateElementsList();
@@ -417,9 +502,8 @@ async function updateIconImage(el) {
 }
 
 function addEmojiElement(emoji, name) {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot) return;
-    if (!screenshot.elements) screenshot.elements = [];
+    const elements = getSharedElementsArray();
+    if (!elements) return;
     const el = {
         id: crypto.randomUUID(),
         type: 'emoji',
@@ -442,7 +526,7 @@ function addEmojiElement(emoji, name) {
         frameColor: '#ffffff',
         frameScale: 100
     };
-    screenshot.elements.push(el);
+    elements.push(el);
     selectedElementId = el.id;
     updateCanvas();
     updateElementsList();
@@ -450,9 +534,8 @@ function addEmojiElement(emoji, name) {
 }
 
 async function addIconElement(iconName) {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot) return;
-    if (!screenshot.elements) screenshot.elements = [];
+    const elements = getSharedElementsArray();
+    if (!elements) return;
     const el = {
         id: crypto.randomUUID(),
         type: 'icon',
@@ -478,7 +561,7 @@ async function addIconElement(iconName) {
         frameColor: '#ffffff',
         frameScale: 100
     };
-    screenshot.elements.push(el);
+    elements.push(el);
     selectedElementId = el.id;
     updateElementsList();
     updateElementProperties();
@@ -494,8 +577,11 @@ async function addIconElement(iconName) {
 
 function deleteElement(id) {
     const screenshot = getCurrentScreenshot();
-    if (!screenshot || !screenshot.elements) return;
-    screenshot.elements = screenshot.elements.filter(e => e.id !== id);
+    if (!screenshot) return;
+    const owner = getOwnerArrayForElement(id);
+    if (!owner) return;
+    const idx = owner.findIndex(e => e.id === id);
+    if (idx !== -1) owner.splice(idx, 1);
     if (selectedElementId === id) selectedElementId = null;
     updateCanvas();
     updateElementsList();
@@ -503,14 +589,14 @@ function deleteElement(id) {
 }
 
 function moveElementLayer(id, direction) {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot || !screenshot.elements) return;
-    const idx = screenshot.elements.findIndex(e => e.id === id);
+    const owner = getOwnerArrayForElement(id);
+    if (!owner) return;
+    const idx = owner.findIndex(e => e.id === id);
     if (idx === -1) return;
-    if (direction === 'up' && idx < screenshot.elements.length - 1) {
-        [screenshot.elements[idx], screenshot.elements[idx + 1]] = [screenshot.elements[idx + 1], screenshot.elements[idx]];
+    if (direction === 'up' && idx < owner.length - 1) {
+        [owner[idx], owner[idx + 1]] = [owner[idx + 1], owner[idx]];
     } else if (direction === 'down' && idx > 0) {
-        [screenshot.elements[idx], screenshot.elements[idx - 1]] = [screenshot.elements[idx - 1], screenshot.elements[idx]];
+        [owner[idx], owner[idx - 1]] = [owner[idx - 1], owner[idx]];
     }
     updateCanvas();
     updateElementsList();
@@ -720,7 +806,7 @@ async function fetchAllGoogleFonts() {
         if (apiKey) {
             url.searchParams.set('key', apiKey);
         }
-        
+
         try {
             const response = await fetch(url);
             if (response.ok) {
@@ -1506,6 +1592,23 @@ function saveState() {
             });
         }
 
+        const stripImage = el => ({ ...el, image: undefined });
+
+        const localizedElements = {};
+        if (s.localizedElements) {
+            Object.keys(s.localizedElements).forEach(lang => {
+                const entry = s.localizedElements[lang];
+                if (!entry) return;
+                const graphics = Array.isArray(entry.graphics)
+                    ? entry.graphics
+                    : (Array.isArray(entry.elements) ? entry.elements : []);
+                localizedElements[lang] = {
+                    linked: entry.linked !== false,
+                    graphics: graphics.map(stripImage)
+                };
+            });
+        }
+
         return {
             src: s.image?.src || '', // Legacy compatibility
             name: s.name,
@@ -1514,10 +1617,8 @@ function saveState() {
             background: s.background,
             screenshot: s.screenshot,
             text: s.text,
-            elements: (s.elements || []).map(el => ({
-                ...el,
-                image: undefined // Don't serialize Image objects
-            })),
+            elements: (s.elements || []).map(stripImage),
+            localizedElements: localizedElements,
             popouts: s.popouts || [],
             overrides: s.overrides
         };
@@ -1591,6 +1692,28 @@ function reconstructElementImages(elements) {
         }
         return restored;
     });
+}
+
+// Reconstruct per-language graphic overrides from saved data
+function reconstructLocalizedElements(localizedElements) {
+    if (!localizedElements || typeof localizedElements !== 'object') return {};
+    const result = {};
+    Object.keys(localizedElements).forEach(lang => {
+        const entry = localizedElements[lang];
+        if (!entry) return;
+        // Back-compat: earlier drafts stored the collection as `elements` and
+        // allowed non-graphic types; keep only graphics since the toggle is
+        // graphic-specific now.
+        const rawSource = Array.isArray(entry.graphics)
+            ? entry.graphics
+            : (Array.isArray(entry.elements) ? entry.elements : []);
+        const source = rawSource.filter(el => el && el.type === 'graphic');
+        result[lang] = {
+            linked: entry.linked !== false,
+            graphics: reconstructElementImages(source)
+        };
+    });
+    return result;
 }
 
 // Load state from IndexedDB for current project
@@ -1668,6 +1791,7 @@ function loadState() {
                                     screenshot: screenshotSettings,
                                     text: s.text || JSON.parse(JSON.stringify(migratedText)),
                                     elements: reconstructElementImages(s.elements),
+                                    localizedElements: reconstructLocalizedElements(s.localizedElements),
                                     popouts: s.popouts || [],
                                     overrides: s.overrides || {}
                                 };
@@ -1707,6 +1831,7 @@ function loadState() {
                                                     screenshot: screenshotSettings,
                                                     text: s.text || JSON.parse(JSON.stringify(migratedText)),
                                                     elements: reconstructElementImages(s.elements),
+                                                    localizedElements: reconstructLocalizedElements(s.localizedElements),
                                                     popouts: s.popouts || [],
                                                     overrides: s.overrides || {}
                                                 };
@@ -1752,6 +1877,7 @@ function loadState() {
                                         screenshot: screenshotSettings,
                                         text: s.text || JSON.parse(JSON.stringify(migratedText)),
                                         elements: reconstructElementImages(s.elements),
+                                        localizedElements: reconstructLocalizedElements(s.localizedElements),
                                         popouts: s.popouts || [],
                                         overrides: s.overrides || {}
                                     };
@@ -2328,9 +2454,42 @@ function syncUIWithState() {
 
 // ===== Elements Tab UI =====
 
+// Show/hide and sync the "Link to source (english)" toggle shown in the
+// Elements panel. The toggle is only relevant for localizations other than
+// the source language.
+function updateElementsLinkSourceToggle() {
+    const group = document.getElementById('elements-link-source-group');
+    if (!group) return;
+
+    const screenshot = getCurrentScreenshot();
+    const lang = state.currentLanguage;
+    const isSource = !lang || lang === SOURCE_LANGUAGE;
+
+    if (!screenshot || isSource) {
+        group.style.display = 'none';
+        return;
+    }
+
+    group.style.display = '';
+
+    const linked = isLocalizationLinked(screenshot, lang);
+    const toggle = document.getElementById('elements-link-source-toggle');
+    if (toggle) toggle.classList.toggle('active', linked);
+
+    const hint = document.getElementById('elements-link-source-hint');
+    if (hint) {
+        hint.textContent = linked
+            ? 'Uses the same graphic elements as the English screenshot.'
+            : 'This localization has its own graphic elements, independent of English.';
+    }
+}
+
 function updateElementsList() {
     const listEl = document.getElementById('elements-list');
     const emptyEl = document.getElementById('elements-empty');
+
+    updateElementsLinkSourceToggle();
+
     if (!listEl) return;
 
     const elements = getElements();
@@ -2497,6 +2656,32 @@ function updateElementProperties() {
 }
 
 function setupElementEventListeners() {
+    // Link-to-source toggle for non-English localizations (graphics only)
+    const linkSourceToggle = document.getElementById('elements-link-source-toggle');
+    if (linkSourceToggle) {
+        linkSourceToggle.addEventListener('click', () => {
+            const screenshot = getCurrentScreenshot();
+            if (!screenshot) return;
+            const lang = state.currentLanguage;
+            if (!lang || lang === SOURCE_LANGUAGE) return;
+
+            const entry = getLocalizationEntry(screenshot, lang);
+            entry.linked = !(entry.linked !== false);
+
+            // If the current selection is a graphic that no longer resolves for
+            // this localization, clear it. Non-graphic selections always survive.
+            if (selectedElementId) {
+                const stillVisible = getElements().some(el => el.id === selectedElementId);
+                if (!stillVisible) selectedElementId = null;
+            }
+
+            updateCanvas();
+            updateElementsList();
+            updateElementProperties();
+            saveState();
+        });
+    }
+
     // Add Graphic button
     const addGraphicBtn = document.getElementById('add-graphic-btn');
     const graphicInput = document.getElementById('element-graphic-input');
@@ -6157,6 +6342,7 @@ function createNewScreenshot(img, src, name, lang, deviceType) {
         screenshot: JSON.parse(JSON.stringify(state.defaults.screenshot)),
         text: JSON.parse(JSON.stringify(textDefaults)),
         elements: JSON.parse(JSON.stringify(state.defaults.elements || [])),
+        localizedElements: {},
         popouts: [],
         // Legacy overrides for backwards compatibility
         overrides: {}
@@ -6566,6 +6752,29 @@ function transferStyle(sourceIndex, targetIndex) {
         return copy;
     });
 
+    // Deep copy per-language graphic overrides (preserving link flags and images)
+    target.localizedElements = {};
+    if (source.localizedElements) {
+        Object.keys(source.localizedElements).forEach(lang => {
+            const entry = source.localizedElements[lang];
+            if (!entry) return;
+            const srcGraphics = Array.isArray(entry.graphics)
+                ? entry.graphics
+                : (Array.isArray(entry.elements) ? entry.elements : []);
+            target.localizedElements[lang] = {
+                linked: entry.linked !== false,
+                graphics: srcGraphics.map(el => {
+                    const copy = JSON.parse(JSON.stringify({ ...el, image: undefined }));
+                    if (el.type === 'graphic' && el.image) {
+                        copy.image = el.image;
+                    }
+                    copy.id = crypto.randomUUID();
+                    return copy;
+                })
+            };
+        });
+    }
+
     // Explicitly skip popouts — crop regions are specific to each screenshot's source image
 
     // Reset transfer mode
@@ -6622,10 +6831,35 @@ function applyStyleToAll() {
             const copy = JSON.parse(JSON.stringify({ ...el, image: undefined }));
             if (el.type === 'graphic' && el.image) {
                 copy.image = el.image;
+            } else if (el.type === 'icon' && el.image) {
+                copy.image = el.image;
             }
             copy.id = crypto.randomUUID();
             return copy;
         });
+
+        // Deep copy per-language graphic overrides
+        target.localizedElements = {};
+        if (source.localizedElements) {
+            Object.keys(source.localizedElements).forEach(lang => {
+                const entry = source.localizedElements[lang];
+                if (!entry) return;
+                const srcGraphics = Array.isArray(entry.graphics)
+                    ? entry.graphics
+                    : (Array.isArray(entry.elements) ? entry.elements : []);
+                target.localizedElements[lang] = {
+                    linked: entry.linked !== false,
+                    graphics: srcGraphics.map(el => {
+                        const copy = JSON.parse(JSON.stringify({ ...el, image: undefined }));
+                        if (el.type === 'graphic' && el.image) {
+                            copy.image = el.image;
+                        }
+                        copy.id = crypto.randomUUID();
+                        return copy;
+                    })
+                };
+            });
+        }
 
         // Explicitly skip popouts — crop regions are specific to each screenshot's source image
     });
@@ -7023,7 +7257,7 @@ function renderScreenshotToCanvas(index, targetCanvas, targetCtx, dims, previewS
         drawNoiseToContext(targetCtx, dims, bg.noiseIntensity);
     }
 
-    const elements = screenshot.elements || [];
+    const elements = getEffectiveElements(screenshot, state.currentLanguage);
 
     // Elements behind screenshot
     drawElementsToContext(targetCtx, dims, elements, 'behind-screenshot');
@@ -7406,9 +7640,9 @@ function drawElementsToContext(context, dims, elements, layer) {
             if (el.iconShadow?.enabled) {
                 const s = el.iconShadow;
                 const hex = s.color || '#000000';
-                const r = parseInt(hex.slice(1,3), 16);
-                const g = parseInt(hex.slice(3,5), 16);
-                const b = parseInt(hex.slice(5,7), 16);
+                const r = parseInt(hex.slice(1, 3), 16);
+                const g = parseInt(hex.slice(3, 5), 16);
+                const b = parseInt(hex.slice(5, 7), 16);
                 context.shadowColor = `rgba(${r},${g},${b},${(s.opacity || 0) / 100})`;
                 context.shadowBlur = s.blur || 0;
                 context.shadowOffsetX = s.x || 0;
@@ -8478,7 +8712,7 @@ function renderIconGrid(category) {
     const grid = document.getElementById('icon-grid');
     if (!grid) return;
     const icons = category === 'popular' ? (typeof LUCIDE_POPULAR !== 'undefined' ? LUCIDE_POPULAR : []) :
-                                            (typeof LUCIDE_ALL !== 'undefined' ? LUCIDE_ALL : []);
+        (typeof LUCIDE_ALL !== 'undefined' ? LUCIDE_ALL : []);
     grid.innerHTML = icons.map(name =>
         `<div class="picker-grid-item icon-grid-item" data-icon-name="${name}" title="${name}"><div class="icon-placeholder"></div></div>`
     ).join('');
