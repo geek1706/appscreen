@@ -140,10 +140,13 @@ function getText() {
 }
 
 function getTextLayoutLanguage(text) {
+    const headlineLang = text.currentHeadlineLang || 'en';
+    const subheadlineLang = text.currentSubheadlineLang || 'en';
+    if (headlineLang === subheadlineLang) return headlineLang;
     if (text.currentLayoutLang) return text.currentLayoutLang;
-    if (text.headlineEnabled !== false) return text.currentHeadlineLang || 'en';
-    if (text.subheadlineEnabled) return text.currentSubheadlineLang || 'en';
-    return text.currentHeadlineLang || text.currentSubheadlineLang || 'en';
+    if (text.headlineEnabled !== false) return headlineLang;
+    if (text.subheadlineEnabled) return subheadlineLang;
+    return headlineLang || subheadlineLang || 'en';
 }
 
 function getTextLanguageSettings(text, lang) {
@@ -4880,6 +4883,7 @@ function switchGlobalLanguage(lang) {
     state.screenshots.forEach(screenshot => {
         screenshot.text.currentHeadlineLang = lang;
         screenshot.text.currentSubheadlineLang = lang;
+        screenshot.text.currentLayoutLang = lang;
     });
 
     // Update UI
@@ -8387,7 +8391,8 @@ async function exportAllForLanguage(lang) {
     // Save original text languages for each screenshot
     const originalTextLangs = state.screenshots.map(s => ({
         headline: s.text.currentHeadlineLang,
-        subheadline: s.text.currentSubheadlineLang
+        subheadline: s.text.currentSubheadlineLang,
+        layout: s.text.currentLayoutLang
     }));
 
     // Temporarily switch to the target language (images and text)
@@ -8395,6 +8400,7 @@ async function exportAllForLanguage(lang) {
     state.screenshots.forEach(s => {
         s.text.currentHeadlineLang = lang;
         s.text.currentSubheadlineLang = lang;
+        s.text.currentLayoutLang = lang;
     });
 
     for (let i = 0; i < state.screenshots.length; i++) {
@@ -8420,6 +8426,7 @@ async function exportAllForLanguage(lang) {
     state.screenshots.forEach((s, i) => {
         s.text.currentHeadlineLang = originalTextLangs[i].headline;
         s.text.currentSubheadlineLang = originalTextLangs[i].subheadline;
+        s.text.currentLayoutLang = originalTextLangs[i].layout;
     });
     updateCanvas();
 
@@ -8455,7 +8462,8 @@ async function exportAllLanguages() {
     // Save original text languages for each screenshot
     const originalTextLangs = state.screenshots.map(s => ({
         headline: s.text.currentHeadlineLang,
-        subheadline: s.text.currentSubheadlineLang
+        subheadline: s.text.currentSubheadlineLang,
+        layout: s.text.currentLayoutLang
     }));
 
     for (let langIdx = 0; langIdx < state.projectLanguages.length; langIdx++) {
@@ -8467,6 +8475,7 @@ async function exportAllLanguages() {
         state.screenshots.forEach(s => {
             s.text.currentHeadlineLang = lang;
             s.text.currentSubheadlineLang = lang;
+            s.text.currentLayoutLang = lang;
         });
 
         for (let i = 0; i < state.screenshots.length; i++) {
@@ -8494,6 +8503,7 @@ async function exportAllLanguages() {
     state.screenshots.forEach((s, i) => {
         s.text.currentHeadlineLang = originalTextLangs[i].headline;
         s.text.currentSubheadlineLang = originalTextLangs[i].subheadline;
+        s.text.currentLayoutLang = originalTextLangs[i].layout;
     });
     updateCanvas();
 
