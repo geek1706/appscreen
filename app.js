@@ -325,6 +325,16 @@ function getElementText(el) {
     return el.text || '';
 }
 
+function getGraphicBorder(el) {
+    if (!el.graphicBorder) {
+        el.graphicBorder = { enabled: false, color: '#ffffff', width: 0 };
+    }
+    if (typeof el.graphicBorder.enabled !== 'boolean') el.graphicBorder.enabled = false;
+    if (!el.graphicBorder.color) el.graphicBorder.color = '#ffffff';
+    if (typeof el.graphicBorder.width !== 'number') el.graphicBorder.width = 0;
+    return el.graphicBorder;
+}
+
 function setElementProperty(id, key, value) {
     const elements = getElements();
     const el = elements.find(e => e.id === id);
@@ -476,7 +486,9 @@ function addGraphicElement(img, src, name) {
         italic: false,
         frame: 'none',
         frameColor: '#ffffff',
-        frameScale: 100
+        frameScale: 100,
+        graphicCornerRadius: 0,
+        graphicBorder: { enabled: false, color: '#ffffff', width: 0 }
     };
     elements.push(el);
     selectedElementId = el.id;
@@ -2665,14 +2677,34 @@ function updateElementProperties() {
     document.getElementById('element-opacity-value').textContent = formatValue(el.opacity) + '%';
 
     // Type-specific properties
+    const graphicProps = document.getElementById('element-graphic-properties');
     const textProps = document.getElementById('element-text-properties');
     const iconProps = document.getElementById('element-icon-properties');
 
     // Hide all type-specific panels first
+    if (graphicProps) graphicProps.style.display = 'none';
     textProps.style.display = 'none';
     if (iconProps) iconProps.style.display = 'none';
 
-    if (el.type === 'text') {
+    if (el.type === 'graphic' && graphicProps) {
+        graphicProps.style.display = '';
+        if (typeof el.graphicCornerRadius !== 'number') el.graphicCornerRadius = 0;
+        const border = getGraphicBorder(el);
+
+        document.getElementById('element-graphic-corner-radius').value = el.graphicCornerRadius;
+        document.getElementById('element-graphic-corner-radius-value').textContent = formatValue(el.graphicCornerRadius) + 'px';
+
+        const borderToggle = document.getElementById('element-graphic-border-toggle');
+        const borderRow = borderToggle?.closest('.toggle-row');
+        const borderOptions = document.getElementById('element-graphic-border-options');
+        if (borderToggle) borderToggle.classList.toggle('active', border.enabled);
+        if (borderRow) borderRow.classList.toggle('collapsed', !border.enabled);
+        if (borderOptions) borderOptions.style.display = border.enabled ? '' : 'none';
+        document.getElementById('element-graphic-border-color').value = border.color;
+        document.getElementById('element-graphic-border-color-hex').value = border.color;
+        document.getElementById('element-graphic-border-width').value = border.width;
+        document.getElementById('element-graphic-border-width-value').textContent = formatValue(border.width) + 'px';
+    } else if (el.type === 'text') {
         textProps.style.display = '';
         document.getElementById('element-text-input').value = getElementText(el);
         document.getElementById('element-font').value = el.font;
@@ -2781,6 +2813,57 @@ function setupElementEventListeners() {
     const addIconBtn = document.getElementById('add-icon-btn');
     if (addIconBtn) {
         addIconBtn.addEventListener('click', () => showIconPicker());
+    }
+
+    // Graphic border toggle
+    const graphicBorderToggle = document.getElementById('element-graphic-border-toggle');
+    if (graphicBorderToggle) {
+        graphicBorderToggle.addEventListener('click', () => {
+            const el = getSelectedElement();
+            if (!el || el.type !== 'graphic') return;
+            const border = getGraphicBorder(el);
+            border.enabled = !border.enabled;
+            updateElementProperties();
+            updateCanvas();
+        });
+    }
+
+    const graphicBorderWidth = document.getElementById('element-graphic-border-width');
+    const graphicBorderWidthVal = document.getElementById('element-graphic-border-width-value');
+    if (graphicBorderWidth) {
+        graphicBorderWidth.addEventListener('input', () => {
+            const el = getSelectedElement();
+            if (!el || el.type !== 'graphic') return;
+            const border = getGraphicBorder(el);
+            border.width = parseFloat(graphicBorderWidth.value);
+            if (graphicBorderWidthVal) graphicBorderWidthVal.textContent = formatValue(border.width) + 'px';
+            updateCanvas();
+        });
+    }
+
+    const graphicBorderColor = document.getElementById('element-graphic-border-color');
+    const graphicBorderColorHex = document.getElementById('element-graphic-border-color-hex');
+    if (graphicBorderColor) {
+        graphicBorderColor.addEventListener('input', () => {
+            const el = getSelectedElement();
+            if (!el || el.type !== 'graphic') return;
+            const border = getGraphicBorder(el);
+            border.color = graphicBorderColor.value;
+            if (graphicBorderColorHex) graphicBorderColorHex.value = graphicBorderColor.value;
+            updateCanvas();
+        });
+    }
+    if (graphicBorderColorHex) {
+        graphicBorderColorHex.addEventListener('change', () => {
+            if (/^#[0-9a-fA-F]{6}$/.test(graphicBorderColorHex.value)) {
+                const el = getSelectedElement();
+                if (!el || el.type !== 'graphic') return;
+                const border = getGraphicBorder(el);
+                border.color = graphicBorderColorHex.value;
+                if (graphicBorderColor) graphicBorderColor.value = graphicBorderColorHex.value;
+                updateCanvas();
+            }
+        });
     }
 
     // Icon color picker
@@ -2898,6 +2981,7 @@ function setupElementEventListeners() {
     bindSlider('element-width', 'width', '%');
     bindSlider('element-rotation', 'rotation', '°');
     bindSlider('element-opacity', 'opacity', '%');
+    bindSlider('element-graphic-corner-radius', 'graphicCornerRadius', 'px');
     bindSlider('element-font-size', 'fontSize', '', parseInt);
     bindSlider('element-frame-scale', 'frameScale', '%');
 
@@ -7809,7 +7893,7 @@ function drawElementsToContext(context, dims, elements, layer) {
         } else if (el.type === 'graphic' && el.image) {
             const aspect = el.image.height / el.image.width;
             const elHeight = elWidth * aspect;
-            context.drawImage(el.image, -elWidth / 2, -elHeight / 2, elWidth, elHeight);
+            drawGraphicElementImage(context, el, elWidth, elHeight);
         } else if (el.type === 'text') {
             const elText = getElementText(el);
             if (!elText) { context.restore(); return; }
@@ -7838,6 +7922,43 @@ function drawElementsToContext(context, dims, elements, layer) {
 
         context.restore();
     });
+}
+
+function createRoundedElementPath(context, x, y, width, height, radius) {
+    const safeRadius = Math.max(0, Math.min(radius || 0, width / 2, height / 2));
+    context.beginPath();
+    if (typeof context.roundRect === 'function') {
+        context.roundRect(x, y, width, height, safeRadius);
+    } else {
+        roundRect(context, x, y, width, height, safeRadius);
+    }
+}
+
+function drawGraphicElementImage(context, el, width, height) {
+    const halfW = width / 2;
+    const halfH = height / 2;
+    const radius = Math.max(0, Math.min(el.graphicCornerRadius || 0, halfW, halfH));
+    const border = getGraphicBorder(el);
+    const borderWidth = border.enabled ? Math.max(0, border.width || 0) : 0;
+
+    if (borderWidth > 0) {
+        context.fillStyle = border.color || '#ffffff';
+        createRoundedElementPath(
+            context,
+            -halfW - borderWidth,
+            -halfH - borderWidth,
+            width + borderWidth * 2,
+            height + borderWidth * 2,
+            radius + borderWidth
+        );
+        context.fill();
+    }
+
+    context.save();
+    createRoundedElementPath(context, -halfW, -halfH, width, height, radius);
+    context.clip();
+    context.drawImage(el.image, -halfW, -halfH, width, height);
+    context.restore();
 }
 
 // ===== Popout rendering =====

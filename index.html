@@ -1158,6 +1158,41 @@
                         </div>
                     </div>
 
+                    <!-- Graphic element properties -->
+                    <div id="element-graphic-properties" style="display: none;">
+                        <div class="divider"></div>
+                        <div class="control-group">
+                            <label class="control-label">Corner Radius</label>
+                            <div class="control-row">
+                                <input type="range" id="element-graphic-corner-radius" min="0" max="100" value="0">
+                                <span class="range-value" id="element-graphic-corner-radius-value">0px</span>
+                            </div>
+                        </div>
+                        <div class="divider"></div>
+                        <div class="control-group">
+                            <div class="toggle-row collapsible collapsed" data-target="element-graphic-border-options">
+                                <span class="toggle-label">Border</span>
+                                <button class="toggle" id="element-graphic-border-toggle"><span class="toggle-knob"></span></button>
+                            </div>
+                        </div>
+                        <div id="element-graphic-border-options" style="display: none;">
+                            <div class="control-group">
+                                <label class="control-label">Border Color</label>
+                                <div class="color-input-wrapper">
+                                    <input type="color" id="element-graphic-border-color" value="#ffffff">
+                                    <input type="text" id="element-graphic-border-color-hex" value="#ffffff">
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label class="control-label">Width</label>
+                                <div class="control-row">
+                                    <input type="range" id="element-graphic-border-width" min="0" max="40" value="0">
+                                    <span class="range-value" id="element-graphic-border-width-value">0px</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Icon element properties -->
                     <div id="element-icon-properties" style="display: none;">
                         <div class="divider"></div>
