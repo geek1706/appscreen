@@ -209,22 +209,25 @@ function normalizeTextSettings(text) {
 // Language used as the source of truth for linked localizations (English)
 const SOURCE_LANGUAGE = 'en';
 
-// Ensure a per-language graphics container exists on the screenshot and return it.
-// Only graphic overlays are localized; text/icon/emoji stay on screenshot.elements.
-// Shape: { linked: boolean, graphics: Array }
+// Ensure a per-language layout container exists on the screenshot and return it.
+// Graphic overlays and popouts can be localized independently. Text/icon/emoji
+// elements stay on screenshot.elements.
+// Shape: { linked: boolean, graphics: Array, popoutsLinked: boolean, popouts: Array }
 function getLocalizationEntry(screenshot, lang) {
     if (!screenshot) return null;
     if (!screenshot.localizedElements) screenshot.localizedElements = {};
     if (!screenshot.localizedElements[lang]) {
-        screenshot.localizedElements[lang] = { linked: true, graphics: [] };
+        screenshot.localizedElements[lang] = { linked: true, graphics: [], popoutsLinked: true, popouts: [] };
     }
     const entry = screenshot.localizedElements[lang];
     // Back-compat: earlier drafts used `elements`, migrate to `graphics`.
     if (!Array.isArray(entry.graphics)) {
         entry.graphics = Array.isArray(entry.elements) ? entry.elements.slice() : [];
     }
+    if (!Array.isArray(entry.popouts)) entry.popouts = [];
     delete entry.elements;
     if (typeof entry.linked !== 'boolean') entry.linked = true;
+    if (typeof entry.popoutsLinked !== 'boolean') entry.popoutsLinked = true;
     return entry;
 }
 
@@ -235,6 +238,15 @@ function isLocalizationLinked(screenshot, lang) {
     const entry = screenshot.localizedElements?.[lang];
     if (!entry) return true;
     return entry.linked !== false;
+}
+
+// Popouts use their own source-link state so graphic overlays and popout
+// crops/layouts can be localized independently.
+function isPopoutsLocalizationLinked(screenshot, lang) {
+    if (!screenshot || !lang || lang === SOURCE_LANGUAGE) return true;
+    const entry = screenshot.localizedElements?.[lang];
+    if (!entry) return true;
+    return entry.popoutsLinked !== false;
 }
 
 // Resolve which elements should render for a given screenshot + language.
@@ -324,9 +336,49 @@ function setElementProperty(id, key, value) {
 }
 
 // ===== Popout accessors =====
+function clonePopout(popout) {
+    return JSON.parse(JSON.stringify(popout));
+}
+
+function getLocalizedPopoutState(screenshot) {
+    const result = {};
+    if (!screenshot?.localizedElements) return result;
+    Object.keys(screenshot.localizedElements).forEach(lang => {
+        const entry = screenshot.localizedElements[lang];
+        if (!entry) return;
+        result[lang] = {
+            popoutsLinked: entry.popoutsLinked !== false,
+            popouts: Array.isArray(entry.popouts) ? entry.popouts.map(clonePopout) : []
+        };
+    });
+    return result;
+}
+
+function getEffectivePopouts(screenshot, lang) {
+    if (!screenshot) return [];
+    const useLang = lang || state.currentLanguage;
+    if (isPopoutsLocalizationLinked(screenshot, useLang)) {
+        return screenshot.popouts || [];
+    }
+    const entry = screenshot.localizedElements?.[useLang];
+    return (entry && Array.isArray(entry.popouts)) ? entry.popouts : [];
+}
+
+function getPopoutsTargetArray() {
+    const screenshot = getCurrentScreenshot();
+    if (!screenshot) return null;
+    const lang = state.currentLanguage;
+    if (isPopoutsLocalizationLinked(screenshot, lang)) {
+        if (!Array.isArray(screenshot.popouts)) screenshot.popouts = [];
+        return screenshot.popouts;
+    }
+    const entry = getLocalizationEntry(screenshot, lang);
+    return entry.popouts;
+}
+
 function getPopouts() {
     const screenshot = getCurrentScreenshot();
-    return screenshot ? (screenshot.popouts || []) : [];
+    return getEffectivePopouts(screenshot, state.currentLanguage);
 }
 
 function getSelectedPopout() {
@@ -358,7 +410,8 @@ function addPopout() {
     if (!screenshot) return;
     const img = getScreenshotImage(screenshot);
     if (!img) return;
-    if (!screenshot.popouts) screenshot.popouts = [];
+    const popouts = getPopoutsTargetArray();
+    if (!popouts) return;
     const p = {
         id: crypto.randomUUID(),
         cropX: 25, cropY: 25, cropWidth: 30, cropHeight: 30,
@@ -368,7 +421,7 @@ function addPopout() {
         shadow: { enabled: true, color: '#000000', blur: 30, opacity: 40, x: 0, y: 15 },
         border: { enabled: true, color: '#ffffff', width: 3, opacity: 100 }
     };
-    screenshot.popouts.push(p);
+    popouts.push(p);
     selectedPopoutId = p.id;
     updateCanvas();
     updatePopoutsList();
@@ -376,9 +429,11 @@ function addPopout() {
 }
 
 function deletePopout(id) {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot || !screenshot.popouts) return;
-    screenshot.popouts = screenshot.popouts.filter(p => p.id !== id);
+    const popouts = getPopoutsTargetArray();
+    if (!popouts) return;
+    const idx = popouts.findIndex(p => p.id === id);
+    if (idx === -1) return;
+    popouts.splice(idx, 1);
     if (selectedPopoutId === id) selectedPopoutId = null;
     updateCanvas();
     updatePopoutsList();
@@ -386,14 +441,14 @@ function deletePopout(id) {
 }
 
 function movePopout(id, direction) {
-    const screenshot = getCurrentScreenshot();
-    if (!screenshot || !screenshot.popouts) return;
-    const idx = screenshot.popouts.findIndex(p => p.id === id);
+    const popouts = getPopoutsTargetArray();
+    if (!popouts) return;
+    const idx = popouts.findIndex(p => p.id === id);
     if (idx === -1) return;
-    if (direction === 'up' && idx < screenshot.popouts.length - 1) {
-        [screenshot.popouts[idx], screenshot.popouts[idx + 1]] = [screenshot.popouts[idx + 1], screenshot.popouts[idx]];
+    if (direction === 'up' && idx < popouts.length - 1) {
+        [popouts[idx], popouts[idx + 1]] = [popouts[idx + 1], popouts[idx]];
     } else if (direction === 'down' && idx > 0) {
-        [screenshot.popouts[idx], screenshot.popouts[idx - 1]] = [screenshot.popouts[idx - 1], screenshot.popouts[idx]];
+        [popouts[idx], popouts[idx - 1]] = [popouts[idx - 1], popouts[idx]];
     }
     updateCanvas();
     updatePopoutsList();
@@ -1607,7 +1662,9 @@ function saveState() {
                     : (Array.isArray(entry.elements) ? entry.elements : []);
                 localizedElements[lang] = {
                     linked: entry.linked !== false,
-                    graphics: graphics.map(stripImage)
+                    graphics: graphics.map(stripImage),
+                    popoutsLinked: entry.popoutsLinked !== false,
+                    popouts: Array.isArray(entry.popouts) ? entry.popouts.map(clonePopout) : []
                 };
             });
         }
@@ -1713,7 +1770,9 @@ function reconstructLocalizedElements(localizedElements) {
         const source = rawSource.filter(el => el && el.type === 'graphic');
         result[lang] = {
             linked: entry.linked !== false,
-            graphics: reconstructElementImages(source)
+            graphics: reconstructElementImages(source),
+            popoutsLinked: entry.popoutsLinked !== false,
+            popouts: Array.isArray(entry.popouts) ? entry.popouts.map(clonePopout) : []
         };
     });
     return result;
@@ -3244,10 +3303,40 @@ function drawSnapGuides() {
 
 // ===== Popouts Tab UI =====
 
+function updatePopoutsLinkSourceToggle() {
+    const group = document.getElementById('popouts-link-source-group');
+    if (!group) return;
+
+    const screenshot = getCurrentScreenshot();
+    const lang = state.currentLanguage;
+    const isSource = !lang || lang === SOURCE_LANGUAGE;
+
+    if (!screenshot || isSource) {
+        group.style.display = 'none';
+        return;
+    }
+
+    group.style.display = '';
+
+    const linked = isPopoutsLocalizationLinked(screenshot, lang);
+    const toggle = document.getElementById('popouts-link-source-toggle');
+    if (toggle) toggle.classList.toggle('active', linked);
+
+    const hint = document.getElementById('popouts-link-source-hint');
+    if (hint) {
+        hint.textContent = linked
+            ? 'Uses the same popouts as the English screenshot.'
+            : 'This localization has its own popout crops and layout.';
+    }
+}
+
 function updatePopoutsList() {
     const listEl = document.getElementById('popouts-list');
     const emptyEl = document.getElementById('popouts-empty');
     const addBtn = document.getElementById('add-popout-btn');
+
+    updatePopoutsLinkSourceToggle();
+
     if (!listEl) return;
 
     const popouts = getPopouts();
@@ -3656,6 +3745,36 @@ function setupCropPreviewDrag() {
 }
 
 function setupPopoutEventListeners() {
+    // Link-to-source toggle for non-English popout localizations
+    const linkSourceToggle = document.getElementById('popouts-link-source-toggle');
+    if (linkSourceToggle) {
+        linkSourceToggle.addEventListener('click', () => {
+            const screenshot = getCurrentScreenshot();
+            if (!screenshot) return;
+            const lang = state.currentLanguage;
+            if (!lang || lang === SOURCE_LANGUAGE) return;
+
+            const entry = getLocalizationEntry(screenshot, lang);
+            const nextLinked = !(entry.popoutsLinked !== false);
+
+            if (!nextLinked && entry.popouts.length === 0) {
+                entry.popouts = (screenshot.popouts || []).map(clonePopout);
+            }
+
+            entry.popoutsLinked = nextLinked;
+
+            if (selectedPopoutId) {
+                const stillVisible = getPopouts().some(p => p.id === selectedPopoutId);
+                if (!stillVisible) selectedPopoutId = null;
+            }
+
+            updateCanvas();
+            updatePopoutsList();
+            updatePopoutProperties();
+            saveState();
+        });
+    }
+
     // Add Popout button
     const addBtn = document.getElementById('add-popout-btn');
     if (addBtn) {
@@ -6757,6 +6876,8 @@ function transferStyle(sourceIndex, targetIndex) {
     });
 
     // Deep copy per-language graphic overrides (preserving link flags and images)
+    // while keeping the target's localized popout layouts intact.
+    const targetLocalizedPopouts = getLocalizedPopoutState(target);
     target.localizedElements = {};
     if (source.localizedElements) {
         Object.keys(source.localizedElements).forEach(lang => {
@@ -6774,10 +6895,21 @@ function transferStyle(sourceIndex, targetIndex) {
                     }
                     copy.id = crypto.randomUUID();
                     return copy;
-                })
+                }),
+                popoutsLinked: targetLocalizedPopouts[lang]?.popoutsLinked !== false,
+                popouts: targetLocalizedPopouts[lang]?.popouts || []
             };
         });
     }
+    Object.keys(targetLocalizedPopouts).forEach(lang => {
+        if (target.localizedElements[lang]) return;
+        target.localizedElements[lang] = {
+            linked: true,
+            graphics: [],
+            popoutsLinked: targetLocalizedPopouts[lang].popoutsLinked,
+            popouts: targetLocalizedPopouts[lang].popouts
+        };
+    });
 
     // Explicitly skip popouts — crop regions are specific to each screenshot's source image
 
@@ -6842,7 +6974,9 @@ function applyStyleToAll() {
             return copy;
         });
 
-        // Deep copy per-language graphic overrides
+        // Deep copy per-language graphic overrides while keeping the target's
+        // localized popout layouts intact.
+        const targetLocalizedPopouts = getLocalizedPopoutState(target);
         target.localizedElements = {};
         if (source.localizedElements) {
             Object.keys(source.localizedElements).forEach(lang => {
@@ -6860,10 +6994,21 @@ function applyStyleToAll() {
                         }
                         copy.id = crypto.randomUUID();
                         return copy;
-                    })
+                    }),
+                    popoutsLinked: targetLocalizedPopouts[lang]?.popoutsLinked !== false,
+                    popouts: targetLocalizedPopouts[lang]?.popouts || []
                 };
             });
         }
+        Object.keys(targetLocalizedPopouts).forEach(lang => {
+            if (target.localizedElements[lang]) return;
+            target.localizedElements[lang] = {
+                linked: true,
+                graphics: [],
+                popoutsLinked: targetLocalizedPopouts[lang].popoutsLinked,
+                popouts: targetLocalizedPopouts[lang].popouts
+            };
+        });
 
         // Explicitly skip popouts — crop regions are specific to each screenshot's source image
     });
@@ -7284,7 +7429,7 @@ function renderScreenshotToCanvas(index, targetCanvas, targetCtx, dims, previewS
     drawElementsToContext(targetCtx, dims, elements, 'above-screenshot');
 
     // Draw popouts
-    const popouts = screenshot.popouts || [];
+    const popouts = getEffectivePopouts(screenshot, state.currentLanguage);
     drawPopoutsToContext(targetCtx, dims, popouts, img, settings);
 
     // Draw text
@@ -7701,7 +7846,7 @@ function drawPopouts(context, dims) {
     if (!screenshot) return;
     const img = getScreenshotImage(screenshot);
     if (!img) return;
-    const popouts = screenshot.popouts || [];
+    const popouts = getEffectivePopouts(screenshot, state.currentLanguage);
     const ss = getScreenshotSettings();
     drawPopoutsToContext(context, dims, popouts, img, ss);
 }
