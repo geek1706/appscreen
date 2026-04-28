@@ -1575,6 +1575,150 @@ function saveProjectsMeta() {
     }
 }
 
+function readAllProjectData() {
+    if (!db) return Promise.resolve([]);
+
+    return new Promise((resolve, reject) => {
+        try {
+            const transaction = db.transaction([PROJECTS_STORE], 'readonly');
+            const store = transaction.objectStore(PROJECTS_STORE);
+            const request = store.getAll();
+
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        } catch (e) {
+            reject(e);
+        }
+    });
+}
+
+async function exportProjectBackup() {
+    if (!db) {
+        await showAppAlert('Project storage is not available.', 'error');
+        return;
+    }
+
+    saveState();
+
+    try {
+        const projectData = await readAllProjectData();
+        const backup = {
+            type: 'appscreen-project-backup',
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            app: {
+                dbName: DB_NAME,
+                dbVersion: DB_VERSION
+            },
+            meta: {
+                projects,
+                currentProjectId
+            },
+            projects: projectData
+        };
+
+        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const date = new Date().toISOString().slice(0, 10);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `appscreen-projects-${date}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+
+        await showAppAlert('Project backup exported.', 'success');
+    } catch (e) {
+        console.error('Error exporting project backup:', e);
+        await showAppAlert('Could not export project backup.', 'error');
+    }
+}
+
+function parseProjectBackup(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            try {
+                resolve(JSON.parse(reader.result));
+            } catch (e) {
+                reject(e);
+            }
+        };
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file);
+    });
+}
+
+function validateProjectBackup(backup) {
+    return backup
+        && backup.type === 'appscreen-project-backup'
+        && backup.meta
+        && Array.isArray(backup.meta.projects)
+        && Array.isArray(backup.projects);
+}
+
+async function importProjectBackup(file) {
+    if (!db) {
+        await showAppAlert('Project storage is not available.', 'error');
+        return;
+    }
+
+    try {
+        const backup = await parseProjectBackup(file);
+        if (!validateProjectBackup(backup)) {
+            await showAppAlert('This is not a valid AppScreen project backup.', 'error');
+            return;
+        }
+
+        const confirmed = await showAppConfirm(
+            'Importing this backup will replace all projects currently stored in this app.\n\nContinue?',
+            'Import',
+            'Cancel'
+        );
+        if (!confirmed) return;
+
+        await new Promise((resolve, reject) => {
+            const transaction = db.transaction([PROJECTS_STORE, META_STORE], 'readwrite');
+            const projectStore = transaction.objectStore(PROJECTS_STORE);
+            const metaStore = transaction.objectStore(META_STORE);
+
+            projectStore.clear();
+            metaStore.clear();
+
+            backup.projects.forEach(project => {
+                if (project?.id) {
+                    projectStore.put(project);
+                }
+            });
+
+            projects = backup.meta.projects;
+            currentProjectId = backup.meta.currentProjectId
+                || projects[0]?.id
+                || 'default';
+
+            metaStore.put({ key: 'projects', value: projects });
+            metaStore.put({ key: 'currentProject', value: currentProjectId });
+
+            transaction.oncomplete = resolve;
+            transaction.onerror = () => reject(transaction.error);
+        });
+
+        resetStateToDefaults();
+        await loadState();
+        updateProjectSelector();
+        syncUIWithState();
+        updateScreenshotList();
+        updateGradientStopsUI();
+        updateCanvas();
+
+        await showAppAlert('Project backup imported.', 'success');
+    } catch (e) {
+        console.error('Error importing project backup:', e);
+        await showAppAlert('Could not import project backup.', 'error');
+    }
+}
+
 // Update project selector dropdown
 function updateProjectSelector() {
     const menu = document.getElementById('project-menu');
@@ -4123,6 +4267,20 @@ function setupEventListeners() {
         document.getElementById('duplicate-from-group').style.display = 'none';
         document.getElementById('project-modal').classList.add('visible');
         document.getElementById('project-name-input').focus();
+    });
+
+    document.getElementById('export-backup-btn').addEventListener('click', exportProjectBackup);
+
+    document.getElementById('import-backup-btn').addEventListener('click', () => {
+        document.getElementById('import-backup-input').click();
+    });
+
+    document.getElementById('import-backup-input').addEventListener('change', async (e) => {
+        const file = e.target.files?.[0];
+        e.target.value = '';
+        if (file) {
+            await importProjectBackup(file);
+        }
     });
 
     document.getElementById('delete-project-btn').addEventListener('click', async () => {

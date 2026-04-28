@@ -17,6 +17,7 @@ out/
 
 # Tauri
 src-tauri/target/
+src-tauri/gen/
 frontend-dist/
 *.dmg
 *.exe
