@@ -867,6 +867,11 @@ input[type="range"]::-webkit-slider-thumb {
 .gradient-stop input[type="number"] {
     flex: 1;
     width: auto;
+    min-width: 0;
+}
+
+.gradient-stop input[data-stop-alpha] {
+    flex: 0.8;
 }
 
 .gradient-stop span {
@@ -1763,7 +1768,8 @@ input[type="range"]::-webkit-slider-thumb {
     gap: 6px;
 }
 
-.preset-swatch {
+.preset-swatch,
+.overlay-preset-swatch {
     aspect-ratio: 1;
     border-radius: 3px;
     cursor: pointer;
@@ -1772,11 +1778,13 @@ input[type="range"]::-webkit-slider-thumb {
     position: relative;
 }
 
-.preset-swatch:hover {
+.preset-swatch:hover,
+.overlay-preset-swatch:hover {
     transform: scale(1.05);
 }
 
-.preset-swatch.selected {
+.preset-swatch.selected,
+.overlay-preset-swatch.selected {
     border-color: #fff;
     box-shadow: 0 0 0 1px var(--accent);
 }

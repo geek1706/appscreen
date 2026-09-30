@@ -512,10 +512,55 @@
                         </div>
                     </div>
                     <div class="control-group">
-                        <label class="control-label">Overlay Color</label>
-                        <div class="color-input-wrapper">
-                            <input type="color" id="bg-overlay-color" value="#000000">
-                            <input type="text" id="bg-overlay-hex" value="#000000">
+                        <label class="control-label">Overlay</label>
+                        <div class="btn-group" id="overlay-type-selector">
+                            <button class="active" data-overlay-type="solid">Solid</button>
+                            <button data-overlay-type="gradient">Gradient</button>
+                        </div>
+                    </div>
+                    <div id="overlay-solid-options">
+                        <div class="control-group">
+                            <label class="control-label">Overlay Color</label>
+                            <div class="color-input-wrapper">
+                                <input type="color" id="bg-overlay-color" value="#000000">
+                                <input type="text" id="bg-overlay-hex" value="#000000">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="overlay-gradient-options" style="display: none;">
+                        <div class="control-group">
+                            <div class="preset-dropdown" id="overlay-preset-dropdown">
+                                <button class="preset-dropdown-trigger" id="overlay-preset-trigger">
+                                    <span>Overlay Presets</span>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="6 9 12 15 18 9"/>
+                                    </svg>
+                                </button>
+                                <div class="preset-dropdown-content" id="overlay-preset-content">
+                                    <div class="preset-grid" id="overlay-presets">
+                                        <div class="overlay-preset-swatch" title="Fade to Black (Bottom)" data-angle="90" data-stops='[{"color":"#000000","position":0,"alpha":0},{"color":"#000000","position":100,"alpha":85}]' style="background: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.85) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Fade to Black (Top)" data-angle="90" data-stops='[{"color":"#000000","position":0,"alpha":85},{"color":"#000000","position":100,"alpha":0}]' style="background: linear-gradient(180deg, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Fade to White (Bottom)" data-angle="90" data-stops='[{"color":"#ffffff","position":0,"alpha":0},{"color":"#ffffff","position":100,"alpha":85}]' style="background: linear-gradient(180deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.85) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Fade to White (Top)" data-angle="90" data-stops='[{"color":"#ffffff","position":0,"alpha":85},{"color":"#ffffff","position":100,"alpha":0}]' style="background: linear-gradient(180deg, rgba(255,255,255,0.85) 0%, rgba(255,255,255,0) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Top &amp; Bottom Vignette" data-angle="90" data-stops='[{"color":"#000000","position":0,"alpha":70},{"color":"#000000","position":50,"alpha":0},{"color":"#000000","position":100,"alpha":70}]' style="background: linear-gradient(180deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 50%, rgba(0,0,0,0.7) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Warm Tint" data-angle="160" data-stops='[{"color":"#ff6b35","position":0,"alpha":0},{"color":"#ff6b35","position":100,"alpha":45}]' style="background: linear-gradient(160deg, rgba(255,107,53,0) 0%, rgba(255,107,53,0.45) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Cool Tint" data-angle="160" data-stops='[{"color":"#2563eb","position":0,"alpha":0},{"color":"#2563eb","position":100,"alpha":45}]' style="background: linear-gradient(160deg, rgba(37,99,235,0) 0%, rgba(37,99,235,0.45) 100%), #888;"></div>
+                                        <div class="overlay-preset-swatch" title="Indigo Glow" data-angle="135" data-stops='[{"color":"#667eea","position":0,"alpha":50},{"color":"#764ba2","position":100,"alpha":70}]' style="background: linear-gradient(135deg, rgba(102,126,234,0.5) 0%, rgba(118,75,162,0.7) 100%), #888;"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <label class="control-label">Gradient Direction</label>
+                            <div class="control-row">
+                                <input type="range" id="overlay-gradient-angle" min="0" max="360" value="90">
+                                <span class="range-value" id="overlay-gradient-angle-value">90°</span>
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <label class="control-label">Colors</label>
+                            <div class="gradient-stops" id="overlay-gradient-stops"></div>
+                            <button class="add-stop-btn" id="add-overlay-gradient-stop">+ Add Color Stop</button>
                         </div>
                     </div>
                     <div class="control-group">
@@ -1144,7 +1189,7 @@
                     <div class="control-group">
                         <label class="control-label">Position Y</label>
                         <div class="control-row">
-                            <input type="range" id="element-y" min="0" max="100" value="50">
+                            <input type="range" id="element-y" min="0" max="150" value="50">
                             <span class="range-value" id="element-y-value">50%</span>
                         </div>
                     </div>
@@ -1152,7 +1197,7 @@
                     <div class="control-group">
                         <label class="control-label">Size</label>
                         <div class="control-row">
-                            <input type="range" id="element-width" min="2" max="100" value="20">
+                            <input type="range" id="element-width" min="2" max="200" value="20">
                             <span class="range-value" id="element-width-value">20%</span>
                         </div>
                     </div>
@@ -1451,7 +1496,7 @@
                     <div class="control-group">
                         <label class="control-label">Position Y</label>
                         <div class="control-row">
-                            <input type="range" id="popout-y" min="0" max="100" value="30">
+                            <input type="range" id="popout-y" min="0" max="150" value="30">
                             <span class="range-value" id="popout-y-value">30%</span>
                         </div>
                     </div>

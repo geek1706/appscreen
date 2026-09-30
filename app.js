@@ -23,8 +23,16 @@ const state = {
             image: null,
             imageFit: 'cover',
             imageBlur: 0,
+            overlayType: 'solid',
             overlayColor: '#000000',
             overlayOpacity: 0,
+            overlayGradient: {
+                angle: 90,
+                stops: [
+                    { color: '#000000', position: 0, alpha: 0 },
+                    { color: '#000000', position: 100, alpha: 100 }
+                ]
+            },
             noise: false,
             noiseIntensity: 10
         },
@@ -121,7 +129,48 @@ function getCurrentScreenshot() {
 
 function getBackground() {
     const screenshot = getCurrentScreenshot();
-    return screenshot ? screenshot.background : state.defaults.background;
+    return normalizeBackground(screenshot ? screenshot.background : state.defaults.background);
+}
+
+// Fill in overlay fields added after earlier releases so old projects keep working
+const DEFAULT_OVERLAY_GRADIENT = {
+    angle: 90,
+    stops: [
+        { color: '#000000', position: 0, alpha: 0 },
+        { color: '#000000', position: 100, alpha: 100 }
+    ]
+};
+
+function normalizeBackground(bg) {
+    if (!bg) return bg;
+    if (!bg.overlayType) bg.overlayType = 'solid';
+    if (!bg.overlayGradient) {
+        bg.overlayGradient = JSON.parse(JSON.stringify(DEFAULT_OVERLAY_GRADIENT));
+    }
+    if (!Array.isArray(bg.overlayGradient.stops) || bg.overlayGradient.stops.length < 2) {
+        bg.overlayGradient.stops = JSON.parse(JSON.stringify(DEFAULT_OVERLAY_GRADIENT.stops));
+    }
+    if (typeof bg.overlayGradient.angle !== 'number') bg.overlayGradient.angle = DEFAULT_OVERLAY_GRADIENT.angle;
+    bg.overlayGradient.stops.forEach(stop => {
+        if (typeof stop.alpha !== 'number') stop.alpha = 100;
+    });
+    return bg;
+}
+
+function rehydrateBackgroundImage(bg) {
+    if (!bg || bg.image || !bg.imageSrc) return bg;
+    const img = new Image();
+    img.onload = () => updateCanvas();
+    img.src = bg.imageSrc;
+    bg.image = img;
+    return bg;
+}
+
+function reconstructBackground(stored, fallback) {
+    const bg = stored || JSON.parse(JSON.stringify(fallback));
+    normalizeBackground(bg);
+    rehydrateBackgroundImage(bg);
+    return bg;
 }
 
 function getScreenshotSettings() {
@@ -713,6 +762,15 @@ function setBackground(key, value) {
     }
 }
 
+// Show the overlay gradient immediately when it would otherwise be invisible at 0% opacity
+function revealOverlayOpacity() {
+    if (getBackground().overlayOpacity === 0) {
+        setBackground('overlayOpacity', 100);
+        document.getElementById('bg-overlay-opacity').value = 100;
+        document.getElementById('bg-overlay-opacity-value').textContent = '100%';
+    }
+}
+
 function setScreenshotSetting(key, value) {
     const screenshot = getCurrentScreenshot();
     if (screenshot) {
@@ -739,7 +797,7 @@ function setTextSetting(key, value) {
 function setCurrentScreenshotAsDefault() {
     const screenshot = getCurrentScreenshot();
     if (screenshot) {
-        state.defaults.background = JSON.parse(JSON.stringify(screenshot.background));
+        state.defaults.background = cloneBackground(screenshot.background);
         state.defaults.screenshot = JSON.parse(JSON.stringify(screenshot.screenshot));
         state.defaults.text = JSON.parse(JSON.stringify(screenshot.text));
     }
@@ -1786,6 +1844,21 @@ function initSync() {
     init();
 }
 
+// Convert a background for IndexedDB storage (Image objects are not structured-cloneable)
+function serializeBackground(bg) {
+    if (!bg) return bg;
+    const imageSrc = bg.image?.src || bg.imageSrc || null;
+    return { ...bg, image: undefined, imageSrc };
+}
+
+// Deep-copy a background while keeping the live Image object
+function cloneBackground(bg) {
+    if (!bg) return bg;
+    const clone = JSON.parse(JSON.stringify({ ...bg, image: null }));
+    if (bg.image) clone.image = bg.image;
+    return clone;
+}
+
 // Save state to IndexedDB for current project
 function saveState() {
     if (!db) return;
@@ -1830,7 +1903,7 @@ function saveState() {
             name: s.name,
             deviceType: s.deviceType,
             localizedImages: localizedImages,
-            background: s.background,
+            background: serializeBackground(s.background),
             screenshot: s.screenshot,
             text: s.text,
             elements: (s.elements || []).map(stripImage),
@@ -1850,7 +1923,7 @@ function saveState() {
         customHeight: state.customHeight,
         currentLanguage: state.currentLanguage,
         projectLanguages: state.projectLanguages,
-        defaults: state.defaults
+        defaults: { ...state.defaults, background: serializeBackground(state.defaults.background) }
     };
 
     // Update screenshot count in project metadata
@@ -1972,8 +2045,10 @@ function loadState() {
                                 image: null,
                                 imageFit: parsed.background.imageFit || 'cover',
                                 imageBlur: parsed.background.imageBlur || 0,
+                                overlayType: parsed.background.overlayType || 'solid',
                                 overlayColor: parsed.background.overlayColor || '#000000',
                                 overlayOpacity: parsed.background.overlayOpacity || 0,
+                                overlayGradient: parsed.background.overlayGradient || JSON.parse(JSON.stringify(state.defaults.background.overlayGradient)),
                                 noise: parsed.background.noise || false,
                                 noiseIntensity: parsed.background.noiseIntensity || 10
                             };
@@ -2005,7 +2080,7 @@ function loadState() {
                                     name: s.name || 'Blank Screen',
                                     deviceType: s.deviceType,
                                     localizedImages: {},
-                                    background: s.background || JSON.parse(JSON.stringify(migratedBackground)),
+                                    background: reconstructBackground(s.background, migratedBackground),
                                     screenshot: screenshotSettings,
                                     text: s.text || JSON.parse(JSON.stringify(migratedText)),
                                     elements: reconstructElementImages(s.elements),
@@ -2045,7 +2120,7 @@ function loadState() {
                                                     name: s.name,
                                                     deviceType: s.deviceType,
                                                     localizedImages: localizedImages,
-                                                    background: s.background || JSON.parse(JSON.stringify(migratedBackground)),
+                                                    background: reconstructBackground(s.background, migratedBackground),
                                                     screenshot: screenshotSettings,
                                                     text: s.text || JSON.parse(JSON.stringify(migratedText)),
                                                     elements: reconstructElementImages(s.elements),
@@ -2091,7 +2166,7 @@ function loadState() {
                                         name: s.name,
                                         deviceType: s.deviceType,
                                         localizedImages: localizedImages,
-                                        background: s.background || JSON.parse(JSON.stringify(migratedBackground)),
+                                        background: reconstructBackground(s.background, migratedBackground),
                                         screenshot: screenshotSettings,
                                         text: s.text || JSON.parse(JSON.stringify(migratedText)),
                                         elements: reconstructElementImages(s.elements),
@@ -2144,6 +2219,11 @@ function loadState() {
                         state.defaults.background = migratedBackground;
                         state.defaults.screenshot = migratedScreenshot;
                         state.defaults.text = migratedText;
+                    }
+
+                    if (state.defaults.background) {
+                        normalizeBackground(state.defaults.background);
+                        rehydrateBackgroundImage(state.defaults.background);
                     }
                 } else {
                     // New project, reset to defaults
@@ -2208,8 +2288,16 @@ function resetStateToDefaults() {
             image: null,
             imageFit: 'cover',
             imageBlur: 0,
+            overlayType: 'solid',
             overlayColor: '#000000',
             overlayOpacity: 0,
+            overlayGradient: {
+                angle: 90,
+                stops: [
+                    { color: '#000000', position: 0, alpha: 0 },
+                    { color: '#000000', position: 100, alpha: 100 }
+                ]
+            },
             noise: false,
             noiseIntensity: 10
         },
@@ -2388,11 +2476,11 @@ function duplicateScreenshot(index) {
     const clone = JSON.parse(JSON.stringify({
         name: original.name,
         deviceType: original.deviceType,
-        background: original.background,
         screenshot: original.screenshot,
         text: original.text,
         overrides: original.overrides
     }));
+    clone.background = cloneBackground(original.background);
 
     const nameParts = clone.name.split('.');
     if (nameParts.length > 1) {
@@ -2524,10 +2612,33 @@ function syncUIWithState() {
     document.getElementById('bg-image-fit').value = bg.imageFit;
     document.getElementById('bg-blur').value = bg.imageBlur;
     document.getElementById('bg-blur-value').textContent = formatValue(bg.imageBlur) + 'px';
+    const bgImagePreview = document.getElementById('bg-image-preview');
+    const bgImagePreviewSrc = bg.image?.src || bg.imageSrc;
+    if (bgImagePreviewSrc) {
+        if (bgImagePreview.getAttribute('src') !== bgImagePreviewSrc) {
+            bgImagePreview.src = bgImagePreviewSrc;
+        }
+        bgImagePreview.style.display = 'block';
+    } else {
+        bgImagePreview.removeAttribute('src');
+        bgImagePreview.style.display = 'none';
+    }
     document.getElementById('bg-overlay-color').value = bg.overlayColor;
     document.getElementById('bg-overlay-hex').value = bg.overlayColor;
     document.getElementById('bg-overlay-opacity').value = bg.overlayOpacity;
     document.getElementById('bg-overlay-opacity-value').textContent = formatValue(bg.overlayOpacity) + '%';
+
+    // Overlay type
+    document.querySelectorAll('#overlay-type-selector button').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.overlayType === bg.overlayType);
+    });
+    const overlayIsGradient = bg.overlayType === 'gradient';
+    document.getElementById('overlay-solid-options').style.display = overlayIsGradient ? 'none' : 'block';
+    document.getElementById('overlay-gradient-options').style.display = overlayIsGradient ? 'block' : 'none';
+
+    // Overlay gradient
+    document.getElementById('overlay-gradient-angle').value = bg.overlayGradient.angle;
+    document.getElementById('overlay-gradient-angle-value').textContent = formatValue(bg.overlayGradient.angle) + '°';
 
     // Noise
     document.getElementById('noise-toggle').classList.toggle('active', bg.noise);
@@ -3329,7 +3440,7 @@ function setupElementCanvasDrag() {
 
         const clamped = {
             x: Math.max(0, Math.min(100, rawX)),
-            y: Math.max(0, Math.min(100, rawY))
+            y: Math.max(0, Math.min(150, rawY))
         };
         const snapped = snapToGuides(clamped.x, clamped.y);
 
@@ -4794,6 +4905,87 @@ function setupEventListeners() {
     document.getElementById('bg-overlay-opacity').addEventListener('input', (e) => {
         setBackground('overlayOpacity', parseInt(e.target.value));
         document.getElementById('bg-overlay-opacity-value').textContent = formatValue(e.target.value) + '%';
+        updateCanvas();
+    });
+
+    // Overlay type selector (solid / gradient)
+    document.querySelectorAll('#overlay-type-selector button').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('#overlay-type-selector button').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+
+            const isGradient = btn.dataset.overlayType === 'gradient';
+            setBackground('overlayType', btn.dataset.overlayType);
+            document.getElementById('overlay-solid-options').style.display = isGradient ? 'none' : 'block';
+            document.getElementById('overlay-gradient-options').style.display = isGradient ? 'block' : 'none';
+
+            if (isGradient) {
+                const bg = getBackground();
+                // Seed the overlay gradient from the solid overlay color on first use
+                if (bg.overlayGradient.stops.every(s => s.color === '#000000')) {
+                    bg.overlayGradient.stops = [
+                        { color: bg.overlayColor, position: 0, alpha: 0 },
+                        { color: bg.overlayColor, position: 100, alpha: 100 }
+                    ];
+                }
+                revealOverlayOpacity();
+                updateGradientStopsUI();
+            }
+
+            updateCanvas();
+        });
+    });
+
+    // Overlay gradient presets
+    document.querySelectorAll('.overlay-preset-swatch').forEach(swatch => {
+        swatch.addEventListener('click', () => {
+            document.querySelectorAll('.overlay-preset-swatch').forEach(s => s.classList.remove('selected'));
+            swatch.classList.add('selected');
+
+            const angle = parseInt(swatch.dataset.angle) || 90;
+            const stops = JSON.parse(swatch.dataset.stops);
+            setBackground('overlayGradient', { angle, stops });
+
+            document.getElementById('overlay-gradient-angle').value = angle;
+            document.getElementById('overlay-gradient-angle-value').textContent = formatValue(angle) + '°';
+            revealOverlayOpacity();
+            updateGradientStopsUI();
+            updateCanvas();
+        });
+    });
+
+    // Overlay gradient preset dropdown
+    const overlayPresetDropdown = document.getElementById('overlay-preset-dropdown');
+    const overlayPresetTrigger = document.getElementById('overlay-preset-trigger');
+    overlayPresetTrigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        overlayPresetDropdown.classList.toggle('open');
+    });
+    document.addEventListener('click', (e) => {
+        if (!overlayPresetDropdown.contains(e.target)) {
+            overlayPresetDropdown.classList.remove('open');
+        }
+    });
+
+    // Overlay gradient angle
+    document.getElementById('overlay-gradient-angle').addEventListener('input', (e) => {
+        setBackground('overlayGradient.angle', parseInt(e.target.value));
+        document.getElementById('overlay-gradient-angle-value').textContent = formatValue(e.target.value) + '°';
+        document.querySelectorAll('.overlay-preset-swatch').forEach(s => s.classList.remove('selected'));
+        updateCanvas();
+    });
+
+    // Add overlay gradient stop
+    document.getElementById('add-overlay-gradient-stop').addEventListener('click', () => {
+        const stops = getBackground().overlayGradient.stops;
+        const lastStop = stops[stops.length - 1];
+        stops.push({
+            color: lastStop.color,
+            position: Math.min(lastStop.position + 20, 100),
+            alpha: typeof lastStop.alpha === 'number' ? lastStop.alpha : 100
+        });
+        document.querySelectorAll('.overlay-preset-swatch').forEach(s => s.classList.remove('selected'));
+        updateGradientStopsUI();
         updateCanvas();
     });
 
@@ -6703,7 +6895,7 @@ function createNewScreenshot(img, src, name, lang, deviceType) {
         name: name || 'Blank Screen',
         deviceType: deviceType,
         localizedImages: localizedImages,
-        background: JSON.parse(JSON.stringify(state.defaults.background)),
+        background: cloneBackground(state.defaults.background),
         screenshot: JSON.parse(JSON.stringify(state.defaults.screenshot)),
         text: JSON.parse(JSON.stringify(textDefaults)),
         elements: JSON.parse(JSON.stringify(state.defaults.elements || [])),
@@ -7087,12 +7279,8 @@ function transferStyle(sourceIndex, targetIndex) {
         return;
     }
 
-    // Deep copy background settings
-    target.background = JSON.parse(JSON.stringify(source.background));
-    // Handle background image separately (not JSON serializable)
-    if (source.background.image) {
-        target.background.image = source.background.image;
-    }
+    // Deep copy background settings (keeps the live background image)
+    target.background = cloneBackground(source.background);
 
     // Deep copy screenshot settings
     target.screenshot = JSON.parse(JSON.stringify(source.screenshot));
@@ -7186,12 +7374,8 @@ function applyStyleToAll() {
     state.screenshots.forEach((target, index) => {
         if (index === applyStyleSourceIndex) return; // Skip source
 
-        // Deep copy background settings
-        target.background = JSON.parse(JSON.stringify(source.background));
-        // Handle background image separately (not JSON serializable)
-        if (source.background.image) {
-            target.background.image = source.background.image;
-        }
+        // Deep copy background settings (keeps the live background image)
+        target.background = cloneBackground(source.background);
 
         // Deep copy screenshot settings
         target.screenshot = JSON.parse(JSON.stringify(source.screenshot));
@@ -7321,17 +7505,34 @@ function replaceScreenshot(index) {
 }
 
 function updateGradientStopsUI() {
-    const container = document.getElementById('gradient-stops');
+    renderGradientStopsUI({
+        containerId: 'gradient-stops',
+        getStops: () => getBackground().gradient.stops,
+        deselectPresets: () => document.querySelectorAll('.preset-swatch').forEach(s => s.classList.remove('selected'))
+    });
+    renderGradientStopsUI({
+        containerId: 'overlay-gradient-stops',
+        getStops: () => getBackground().overlayGradient.stops,
+        withAlpha: true,
+        deselectPresets: () => document.querySelectorAll('.overlay-preset-swatch').forEach(s => s.classList.remove('selected'))
+    });
+}
+
+function renderGradientStopsUI({ containerId, getStops, withAlpha = false, deselectPresets }) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
     container.innerHTML = '';
 
-    const bg = getBackground();
-    bg.gradient.stops.forEach((stop, index) => {
+    getStops().forEach((stop, index) => {
         const div = document.createElement('div');
         div.className = 'gradient-stop';
         div.innerHTML = `
             <input type="color" value="${stop.color}" data-stop="${index}">
-            <input type="number" value="${stop.position}" min="0" max="100" data-stop="${index}">
+            <input type="number" value="${stop.position}" min="0" max="100" data-stop="${index}" title="Position">
             <span>%</span>
+            ${withAlpha ? `
+            <input type="number" value="${typeof stop.alpha === 'number' ? stop.alpha : 100}" min="0" max="100" data-stop-alpha="${index}" title="Opacity">
+            <span>%</span>` : ''}
             ${index > 1 ? `<button class="screenshot-delete" data-stop="${index}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M18 6L6 18M6 6l12 12"/>
@@ -7340,28 +7541,31 @@ function updateGradientStopsUI() {
         `;
 
         div.querySelector('input[type="color"]').addEventListener('input', (e) => {
-            const currentBg = getBackground();
-            currentBg.gradient.stops[index].color = e.target.value;
-            // Deselect preset when manually changing colors
-            document.querySelectorAll('.preset-swatch').forEach(s => s.classList.remove('selected'));
+            getStops()[index].color = e.target.value;
+            deselectPresets();
             updateCanvas();
         });
 
-        div.querySelector('input[type="number"]').addEventListener('input', (e) => {
-            const currentBg = getBackground();
-            currentBg.gradient.stops[index].position = parseInt(e.target.value);
-            // Deselect preset when manually changing positions
-            document.querySelectorAll('.preset-swatch').forEach(s => s.classList.remove('selected'));
+        div.querySelector('input[type="number"]:not([data-stop-alpha])').addEventListener('input', (e) => {
+            getStops()[index].position = parseInt(e.target.value);
+            deselectPresets();
             updateCanvas();
         });
+
+        const alphaInput = div.querySelector('input[data-stop-alpha]');
+        if (alphaInput) {
+            alphaInput.addEventListener('input', (e) => {
+                getStops()[index].alpha = parseInt(e.target.value);
+                deselectPresets();
+                updateCanvas();
+            });
+        }
 
         const deleteBtn = div.querySelector('.screenshot-delete');
         if (deleteBtn) {
             deleteBtn.addEventListener('click', () => {
-                const currentBg = getBackground();
-                currentBg.gradient.stops.splice(index, 1);
-                // Deselect preset when deleting a stop
-                document.querySelectorAll('.preset-swatch').forEach(s => s.classList.remove('selected'));
+                getStops().splice(index, 1);
+                deselectPresets();
                 updateGradientStopsUI();
                 updateCanvas();
             });
@@ -7684,18 +7888,7 @@ function renderScreenshotToCanvas(index, targetCanvas, targetCtx, dims, previewS
 
 function drawBackgroundToContext(context, dims, bg) {
     if (bg.type === 'gradient') {
-        const angle = bg.gradient.angle * Math.PI / 180;
-        const x1 = dims.width / 2 - Math.cos(angle) * dims.width;
-        const y1 = dims.height / 2 - Math.sin(angle) * dims.height;
-        const x2 = dims.width / 2 + Math.cos(angle) * dims.width;
-        const y2 = dims.height / 2 + Math.sin(angle) * dims.height;
-
-        const gradient = context.createLinearGradient(x1, y1, x2, y2);
-        bg.gradient.stops.forEach(stop => {
-            gradient.addColorStop(stop.position / 100, stop.color);
-        });
-
-        context.fillStyle = gradient;
+        context.fillStyle = createLinearGradientForSettings(context, dims, bg.gradient);
         context.fillRect(0, 0, dims.width, dims.height);
     } else if (bg.type === 'solid') {
         context.fillStyle = bg.solid;
@@ -7740,7 +7933,9 @@ function drawBackgroundToContext(context, dims, bg) {
         context.filter = 'none';
 
         if (bg.overlayOpacity > 0) {
-            context.fillStyle = bg.overlayColor;
+            context.fillStyle = bg.overlayType === 'gradient'
+                ? createLinearGradientForSettings(context, dims, bg.overlayGradient)
+                : bg.overlayColor;
             context.globalAlpha = bg.overlayOpacity / 100;
             context.fillRect(0, 0, dims.width, dims.height);
             context.globalAlpha = 1;
@@ -8312,23 +8507,37 @@ function drawStar(context, cx, cy, size, color) {
     context.restore();
 }
 
+function colorWithAlpha(color, alphaPercent) {
+    if (typeof alphaPercent !== 'number' || alphaPercent >= 100) return color;
+    const alpha = Math.max(0, alphaPercent) / 100;
+    const hex = String(color).replace('#', '');
+    if (hex.length !== 6) return color;
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function createLinearGradientForSettings(context, dims, settings) {
+    const angle = settings.angle * Math.PI / 180;
+    const x1 = dims.width / 2 - Math.cos(angle) * dims.width;
+    const y1 = dims.height / 2 - Math.sin(angle) * dims.height;
+    const x2 = dims.width / 2 + Math.cos(angle) * dims.width;
+    const y2 = dims.height / 2 + Math.sin(angle) * dims.height;
+
+    const gradient = context.createLinearGradient(x1, y1, x2, y2);
+    settings.stops.forEach(stop => {
+        gradient.addColorStop(stop.position / 100, colorWithAlpha(stop.color, stop.alpha));
+    });
+    return gradient;
+}
+
 function drawBackground() {
     const dims = getCanvasDimensions();
     const bg = getBackground();
 
     if (bg.type === 'gradient') {
-        const angle = bg.gradient.angle * Math.PI / 180;
-        const x1 = dims.width / 2 - Math.cos(angle) * dims.width;
-        const y1 = dims.height / 2 - Math.sin(angle) * dims.height;
-        const x2 = dims.width / 2 + Math.cos(angle) * dims.width;
-        const y2 = dims.height / 2 + Math.sin(angle) * dims.height;
-
-        const gradient = ctx.createLinearGradient(x1, y1, x2, y2);
-        bg.gradient.stops.forEach(stop => {
-            gradient.addColorStop(stop.position / 100, stop.color);
-        });
-
-        ctx.fillStyle = gradient;
+        ctx.fillStyle = createLinearGradientForSettings(ctx, dims, bg.gradient);
         ctx.fillRect(0, 0, dims.width, dims.height);
     } else if (bg.type === 'solid') {
         ctx.fillStyle = bg.solid;
@@ -8374,7 +8583,9 @@ function drawBackground() {
 
         // Overlay
         if (bg.overlayOpacity > 0) {
-            ctx.fillStyle = bg.overlayColor;
+            ctx.fillStyle = bg.overlayType === 'gradient'
+                ? createLinearGradientForSettings(ctx, dims, bg.overlayGradient)
+                : bg.overlayColor;
             ctx.globalAlpha = bg.overlayOpacity / 100;
             ctx.fillRect(0, 0, dims.width, dims.height);
             ctx.globalAlpha = 1;
