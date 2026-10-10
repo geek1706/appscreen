@@ -45,6 +45,8 @@ const state = {
             cornerRadius: 24,
             use3D: false,
             device3D: 'iphone',
+            device2D: 'none',
+            frameColor: 'silver',
             rotation3D: { x: 0, y: 0, z: 0 },
             shadow: {
                 enabled: true,
@@ -2308,6 +2310,11 @@ function resetStateToDefaults() {
             rotation: 0,
             perspective: 0,
             cornerRadius: 24,
+            use3D: false,
+            device3D: 'iphone',
+            device2D: 'none',
+            frameColor: 'silver',
+            rotation3D: { x: 0, y: 0, z: 0 },
             shadow: {
                 enabled: true,
                 color: '#000000',
@@ -2532,31 +2539,46 @@ function updateFrameColorSwatches(deviceType, activeColorId) {
         return;
     }
 
-    // Default to first preset if none specified
-    if (!activeColorId) activeColorId = presets[0].id;
+    // Resolve legacy iPhone finish IDs without changing saved screenshot settings.
+    activeColorId = getFrameColorPreset(deviceType, activeColorId).id;
 
     container.innerHTML = presets.map(p =>
-        `<div class="frame-color-swatch${p.id === activeColorId ? ' active' : ''}" ` +
-        `data-color-id="${p.id}" title="${p.label}" ` +
-        `style="background: ${p.swatch}"></div>`
+        `<button type="button" class="frame-color-swatch${p.id === activeColorId ? ' active' : ''}" ` +
+        `data-color-id="${p.id}" title="${p.label}" aria-label="${p.label}" aria-pressed="${p.id === activeColorId}" ` +
+        `style="background: ${p.swatch}"></button>`
     ).join('');
 
     // Attach click handlers
     container.querySelectorAll('.frame-color-swatch').forEach(swatch => {
         swatch.addEventListener('click', () => {
             const colorId = swatch.dataset.colorId;
-            container.querySelectorAll('.frame-color-swatch').forEach(s => s.classList.remove('active'));
-            swatch.classList.add('active');
+            container.querySelectorAll('.frame-color-swatch').forEach(s => {
+                s.classList.toggle('active', s === swatch);
+                s.setAttribute('aria-pressed', String(s === swatch));
+            });
 
             setScreenshotSetting('frameColor', colorId);
 
-            if (typeof setPhoneFrameColor === 'function') {
+            if (getScreenshotSettings().use3D && typeof setPhoneFrameColor === 'function') {
                 setPhoneFrameColor(colorId, deviceType);
             }
 
             updateCanvas();
         });
     });
+}
+
+function updateDeviceFrameUI(settings) {
+    const use3D = settings.use3D || false;
+    const framed2D = settings.device2D === 'iphone';
+    document.getElementById('device-2d-options').style.display = use3D ? 'none' : 'block';
+    document.querySelectorAll('#device-2d-selector button').forEach(button => {
+        button.classList.toggle('active', button.dataset.model === (settings.device2D || 'none'));
+    });
+    document.getElementById('frame-color-section').style.display = use3D || framed2D ? 'block' : 'none';
+    document.getElementById('corner-radius-group').style.display = framed2D ? 'none' : 'block';
+    document.getElementById('screenshot-border-settings').style.display = framed2D ? 'none' : 'block';
+    updateFrameColorSwatches(use3D ? (settings.device3D || 'iphone') : 'iphone', settings.frameColor);
 }
 
 // Sync UI controls with current state
@@ -2747,7 +2769,7 @@ function syncUIWithState() {
     document.querySelectorAll('#device-3d-selector button').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.model === device3D);
     });
-    updateFrameColorSwatches(device3D, ss.frameColor);
+    updateDeviceFrameUI(ss);
     document.getElementById('rotation-3d-options').style.display = use3D ? 'block' : 'none';
     document.getElementById('rotation-3d-x').value = rotation3D.x;
     document.getElementById('rotation-3d-x-value').textContent = formatValue(rotation3D.x) + '°';
@@ -2759,7 +2781,6 @@ function syncUIWithState() {
     // Hide 2D-only settings in 3D mode, show 3D tip
     document.getElementById('2d-only-settings').style.display = use3D ? 'none' : 'block';
     document.getElementById('position-presets-section').style.display = use3D ? 'none' : 'block';
-    document.getElementById('frame-color-section').style.display = use3D ? 'block' : 'none';
     document.getElementById('3d-tip').style.display = use3D ? 'flex' : 'none';
 
     // Show/hide 3D renderer and switch model if needed
@@ -5324,17 +5345,29 @@ function setupEventListeners() {
             // Hide 2D-only settings in 3D mode, show 3D tip
             document.getElementById('2d-only-settings').style.display = use3D ? 'none' : 'block';
             document.getElementById('position-presets-section').style.display = use3D ? 'none' : 'block';
-            document.getElementById('frame-color-section').style.display = use3D ? 'block' : 'none';
+            updateDeviceFrameUI(getScreenshotSettings());
             document.getElementById('3d-tip').style.display = use3D ? 'flex' : 'none';
 
             if (typeof showThreeJS === 'function') {
                 showThreeJS(use3D);
             }
 
+            if (use3D && typeof switchPhoneModel === 'function') {
+                switchPhoneModel(getScreenshotSettings().device3D || 'iphone');
+            }
             if (use3D && typeof updateScreenTexture === 'function') {
                 updateScreenTexture();
             }
 
+            updateCanvas();
+        });
+    });
+
+    // 2D device frames are optional, keeping older frameless projects unchanged.
+    document.querySelectorAll('#device-2d-selector button').forEach(button => {
+        button.addEventListener('click', () => {
+            setScreenshotSetting('device2D', button.dataset.model);
+            updateDeviceFrameUI(getScreenshotSettings());
             updateCanvas();
         });
     });
@@ -5358,11 +5391,7 @@ function setupEventListeners() {
                 switchPhoneModel(device3D);
             }
 
-            // Apply default frame color after model switch
-            if (defaultColor && typeof setPhoneFrameColor === 'function') {
-                setTimeout(() => setPhoneFrameColor(defaultColor, device3D), 100);
-            }
-
+            // The model's load callback applies its finish once ready.
             updateCanvas();
         });
     });
@@ -7612,12 +7641,10 @@ function updateCanvas() {
         const img = screenshot ? getScreenshotImage(screenshot) : null;
         const ss = getScreenshotSettings();
         const use3D = ss.use3D || false;
-        if (use3D && img && typeof renderThreeJSToCanvas === 'function' && phoneModelLoaded) {
-            // In 3D mode, update the screen texture and render the phone model
-            if (typeof updateScreenTexture === 'function') {
-                updateScreenTexture();
-            }
-            renderThreeJSToCanvas(canvas, dims.width, dims.height);
+        if (use3D && img && typeof renderThreeJSForScreenshot === 'function') {
+            // Use this screenshot's device and finish, not whichever model is active in the UI.
+            if (!isThreeJSInitialized) showThreeJS(true);
+            renderThreeJSForScreenshot(canvas, dims.width, dims.height, state.selectedIndex);
         } else if (!use3D) {
             // In 2D mode, draw the screenshot normally
             drawScreenshot();
@@ -7862,7 +7889,7 @@ function renderScreenshotToCanvas(index, targetCanvas, targetCtx, dims, previewS
     const use3D = settings.use3D || false;
 
     if (img) {
-        if (use3D && typeof renderThreeJSForScreenshot === 'function' && phoneModelLoaded) {
+        if (use3D && typeof renderThreeJSForScreenshot === 'function') {
             // Render 3D phone model for this specific screenshot
             renderThreeJSForScreenshot(targetCanvas, dims.width, dims.height, index);
         } else {
@@ -7960,6 +7987,10 @@ function drawNoiseToContext(context, dims, intensity) {
 
 function drawScreenshotToContext(context, dims, img, settings) {
     if (!img) return;
+    if (settings.device2D === 'iphone') {
+        drawIPhone17FrameToContext(context, dims, img, settings);
+        return;
+    }
 
     const scale = settings.scale / 100;
     let imgWidth = dims.width * scale;
@@ -8010,7 +8041,7 @@ function drawScreenshotToContext(context, dims, img, settings) {
         // Draw filled rounded rect for shadow
         context.fillStyle = '#000';
         context.beginPath();
-        context.roundRect(x, y, imgWidth, imgHeight, radius);
+        roundRect(context, x, y, imgWidth, imgHeight, radius);
         context.fill();
 
         // Reset shadow before drawing image
@@ -8022,7 +8053,7 @@ function drawScreenshotToContext(context, dims, img, settings) {
 
     // Clip and draw image
     context.beginPath();
-    context.roundRect(x, y, imgWidth, imgHeight, radius);
+    roundRect(context, x, y, imgWidth, imgHeight, radius);
     context.clip();
     context.drawImage(img, x, y, imgWidth, imgHeight);
 
@@ -8054,7 +8085,7 @@ function drawDeviceFrameToContext(context, x, y, width, height, settings) {
     context.strokeStyle = frameColor;
     context.lineWidth = frameWidth;
     context.beginPath();
-    context.roundRect(x - frameWidth / 2, y - frameWidth / 2, width + frameWidth, height + frameWidth, radius);
+    roundRect(context, x - frameWidth / 2, y - frameWidth / 2, width + frameWidth, height + frameWidth, radius);
     context.stroke();
     context.globalAlpha = 1;
 }
@@ -8603,108 +8634,7 @@ function drawScreenshot() {
     if (!img) return;
 
     const settings = getScreenshotSettings();
-    const scale = settings.scale / 100;
-
-    // Calculate scaled dimensions
-    let imgWidth = dims.width * scale;
-    let imgHeight = (img.height / img.width) * imgWidth;
-
-    // If image is taller than canvas after scaling, adjust
-    if (imgHeight > dims.height * scale) {
-        imgHeight = dims.height * scale;
-        imgWidth = (img.width / img.height) * imgHeight;
-    }
-
-    // Ensure minimum movement range so position works even at 100% scale
-    const moveX = Math.max(dims.width - imgWidth, dims.width * 0.15);
-    const moveY = Math.max(dims.height - imgHeight, dims.height * 0.15);
-    const x = (dims.width - imgWidth) / 2 + (settings.x / 100 - 0.5) * moveX;
-    const y = (dims.height - imgHeight) / 2 + (settings.y / 100 - 0.5) * moveY;
-
-    // Center point for transformations
-    const centerX = x + imgWidth / 2;
-    const centerY = y + imgHeight / 2;
-
-    ctx.save();
-
-    // Apply transformations
-    ctx.translate(centerX, centerY);
-
-    // Apply rotation
-    if (settings.rotation !== 0) {
-        ctx.rotate(settings.rotation * Math.PI / 180);
-    }
-
-    // Apply perspective (simulated with scale transform)
-    if (settings.perspective !== 0) {
-        const perspectiveScale = 1 - Math.abs(settings.perspective) * 0.005;
-        ctx.transform(1, settings.perspective * 0.01, 0, 1, 0, 0);
-    }
-
-    ctx.translate(-centerX, -centerY);
-
-    // Draw rounded rectangle with screenshot
-    const radius = settings.cornerRadius * (imgWidth / 400); // Scale radius with image
-
-    // Draw shadow first (needs a filled shape, not clipped)
-    if (settings.shadow.enabled) {
-        const shadowColor = hexToRgba(settings.shadow.color, settings.shadow.opacity / 100);
-        ctx.shadowColor = shadowColor;
-        ctx.shadowBlur = settings.shadow.blur;
-        ctx.shadowOffsetX = settings.shadow.x;
-        ctx.shadowOffsetY = settings.shadow.y;
-
-        // Draw filled rounded rect for shadow
-        ctx.fillStyle = '#000';
-        ctx.beginPath();
-        roundRect(ctx, x, y, imgWidth, imgHeight, radius);
-        ctx.fill();
-
-        // Reset shadow before drawing image
-        ctx.shadowColor = 'transparent';
-        ctx.shadowBlur = 0;
-        ctx.shadowOffsetX = 0;
-        ctx.shadowOffsetY = 0;
-    }
-
-    // Clip and draw image
-    ctx.beginPath();
-    roundRect(ctx, x, y, imgWidth, imgHeight, radius);
-    ctx.clip();
-    ctx.drawImage(img, x, y, imgWidth, imgHeight);
-
-    ctx.restore();
-
-    // Draw device frame if enabled (needs separate transform context)
-    if (settings.frame.enabled) {
-        ctx.save();
-        ctx.translate(centerX, centerY);
-        if (settings.rotation !== 0) {
-            ctx.rotate(settings.rotation * Math.PI / 180);
-        }
-        if (settings.perspective !== 0) {
-            ctx.transform(1, settings.perspective * 0.01, 0, 1, 0, 0);
-        }
-        ctx.translate(-centerX, -centerY);
-        drawDeviceFrame(x, y, imgWidth, imgHeight);
-        ctx.restore();
-    }
-}
-
-function drawDeviceFrame(x, y, width, height) {
-    const settings = getScreenshotSettings();
-    const frameColor = settings.frame.color;
-    const frameWidth = settings.frame.width * (width / 400); // Scale with image
-    const frameOpacity = settings.frame.opacity / 100;
-    const radius = settings.cornerRadius * (width / 400) + frameWidth;
-
-    ctx.globalAlpha = frameOpacity;
-    ctx.strokeStyle = frameColor;
-    ctx.lineWidth = frameWidth;
-    ctx.beginPath();
-    roundRect(ctx, x - frameWidth / 2, y - frameWidth / 2, width + frameWidth, height + frameWidth, radius);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
+    drawScreenshotToContext(ctx, dims, img, settings);
 }
 
 function drawText() {
@@ -8954,12 +8884,30 @@ function hexToRgba(hex, alpha) {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+// Wait for device assets before exporting so mixed-device projects never get blank phones.
+async function prepareDeviceFramesForExport(indices) {
+    const deviceTypes = [...new Set(indices
+        .filter(index => state.screenshots[index]?.screenshot.use3D)
+        .map(index => state.screenshots[index].screenshot.device3D || 'iphone'))];
+    if (!deviceTypes.length) return true;
+    try {
+        showThreeJS(true);
+        await Promise.all(deviceTypes.map(type => loadCachedPhoneModel(type)));
+        return true;
+    } catch (error) {
+        console.error('Unable to prepare device frames for export:', error);
+        await showAppAlert('Could not load a device frame. Please try exporting again.', 'error');
+        return false;
+    }
+}
+
 async function exportCurrent() {
     if (state.screenshots.length === 0) {
         await showAppAlert('Please upload a screenshot first', 'info');
         return;
     }
 
+    if (!await prepareDeviceFramesForExport([state.selectedIndex])) return;
     // Ensure canvas is up-to-date (especially important for 3D mode)
     updateCanvas();
 
@@ -9014,6 +8962,7 @@ function hideExportProgress() {
 
 // Export all screenshots for a specific language
 async function exportAllForLanguage(lang) {
+    if (!await prepareDeviceFramesForExport(state.screenshots.map((_, index) => index))) return;
     const originalIndex = state.selectedIndex;
     const originalLang = state.currentLanguage;
     const zip = new JSZip();
@@ -9082,6 +9031,7 @@ async function exportAllForLanguage(lang) {
 
 // Export all screenshots for all languages (separate folders)
 async function exportAllLanguages() {
+    if (!await prepareDeviceFramesForExport(state.screenshots.map((_, index) => index))) return;
     const originalIndex = state.selectedIndex;
     const originalLang = state.currentLanguage;
     const zip = new JSZip();

@@ -11,6 +11,7 @@ let orbitControls = null;
 let isThreeJSInitialized = false;
 let phoneModelLoaded = false;
 let phoneModelLoading = false;
+let activeModelLoadId = 0;
 
 // Screen texture for the screenshot
 let screenTexture = null;
@@ -30,12 +31,12 @@ let phoneModelCache = {};  // { deviceType: { model, pivot, screenPlane, baseSca
 // Device-specific configurations
 const deviceConfigs = {
     iphone: {
-        modelPath: 'models/iphone-15-pro-max.glb',
-        aspectRatio: 1290 / 2796,
-        screenHeightFactor: 0.826,
-        screenOffset: { x: 0.027, y: 0.745, z: 0.098 },
-        positionOffsetFactor: 0.81,
-        cornerRadiusFactor: 0.16,
+        createModel: createIPhone17ProMaxModel,
+        aspectRatio: iPhone17ProMax.pixelWidth / iPhone17ProMax.pixelHeight,
+        screenHeightFactor: iPhone17ProMax.screenHeight / iPhone17ProMax.height,
+        screenOffset: { x: 0, y: 0, z: (iPhone17ProMax.depth / 2 + 0.14) * 4.3 / iPhone17ProMax.height },
+        positionOffsetFactor: 0.5,
+        cornerRadiusFactor: iPhone17ProMax.screenRadius / iPhone17ProMax.screenWidth,
         modelRotation: { x: 0, y: 0, z: 0 }  // No correction needed
     },
     samsung: {
@@ -52,24 +53,7 @@ const deviceConfigs = {
 // Frame color presets per device (real device colors)
 // Using var so it's accessible from app.js
 var frameColorPresets = {
-    iphone: [
-        { id: 'natural', label: 'Natural Titanium', swatch: '#9d927f',
-          materials: { backpanel: '#9d927f', metalframe: '#5f5950', gray: '#221f1b' } },
-        { id: 'blue', label: 'Blue Titanium', swatch: '#3d4d5c',
-          materials: { backpanel: '#394d5f', metalframe: '#3a4553', gray: '#1a1f24' } },
-        { id: 'white', label: 'White Titanium', swatch: '#e3ddd4',
-          materials: { backpanel: '#e3ddd4', metalframe: '#c4bdb4', gray: '#2a2825' } },
-        { id: 'black', label: 'Black Titanium', swatch: '#3a3632',
-          materials: { backpanel: '#3a3632', metalframe: '#2a2725', gray: '#1a1918' } },
-        { id: 'desert', label: 'Desert Titanium', swatch: '#c4a882',
-          materials: { backpanel: '#c4a882', metalframe: '#8a7560', gray: '#2a2218' } },
-        { id: 'deep-purple', label: 'Deep Purple', swatch: '#5b4a6e',
-          materials: { backpanel: '#5b4a6e', metalframe: '#3d3348', gray: '#1e1825' } },
-        { id: 'gold', label: 'Gold', swatch: '#e3c8a0',
-          materials: { backpanel: '#e3c8a0', metalframe: '#c9a96e', gray: '#2a2418' } },
-        { id: 'red', label: 'Product Red', swatch: '#c1272d',
-          materials: { backpanel: '#c1272d', metalframe: '#8a1c20', gray: '#1a0a0a' } },
-    ],
+    iphone: iPhone17ProMax.colors,
     samsung: [
         { id: 'gray', label: 'Titanium Gray', swatch: '#8a8a8a',
           materials: { back_glass: '#4c4c4c', frame: '#cdcdcd', antenna: '#707070' } },
@@ -88,8 +72,31 @@ var frameColorPresets = {
     ]
 };
 
-// Store original material colors for the current model
-let originalMaterialColors = {};
+function getFrameColorPreset(deviceType, presetId) {
+    if (deviceType === 'iphone') return getIPhone17FrameColor(presetId);
+    const presets = frameColorPresets[deviceType];
+    return presets?.find(p => p.id === presetId) || presets?.[0];
+}
+
+// Keep generated models on the same asynchronous loading path as GLB models.
+function createDeviceModelLoader(deviceType) {
+    const config = deviceConfigs[deviceType];
+    if (!config.createModel) return new THREE.GLTFLoader();
+    return {
+        load(path, onLoad, onProgress, onError) {
+            Promise.resolve().then(() => onLoad({ scene: config.createModel() })).catch(onError);
+        }
+    };
+}
+
+function disposePhoneModel(model) {
+    model?.traverse(child => {
+        if (!child.isMesh) return;
+        child.geometry?.dispose();
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        materials.forEach(material => material?.dispose());
+    });
+}
 
 // Apply a frame color preset to the phone model
 function setPhoneFrameColor(presetId, deviceType) {
@@ -99,7 +106,7 @@ function setPhoneFrameColor(presetId, deviceType) {
     const presets = frameColorPresets[deviceType];
     if (!presets) return;
 
-    const preset = presets.find(p => p.id === presetId);
+    const preset = getFrameColorPreset(deviceType, presetId);
     if (!preset) return;
 
     phoneModel.traverse((child) => {
@@ -107,6 +114,7 @@ function setPhoneFrameColor(presetId, deviceType) {
             const matName = (child.material.name || '').toLowerCase();
             if (preset.materials[matName]) {
                 child.material.color.set(preset.materials[matName]);
+                if (deviceType === 'iphone') child.material.color.convertSRGBToLinear();
             }
         }
     });
@@ -122,7 +130,7 @@ function setCachedModelFrameColor(presetId, deviceType) {
     const presets = frameColorPresets[deviceType];
     if (!presets) return;
 
-    const preset = presets.find(p => p.id === presetId);
+    const preset = getFrameColorPreset(deviceType, presetId);
     if (!preset) return;
 
     cached.model.traverse((child) => {
@@ -130,6 +138,7 @@ function setCachedModelFrameColor(presetId, deviceType) {
             const matName = (child.material.name || '').toLowerCase();
             if (preset.materials[matName]) {
                 child.material.color.set(preset.materials[matName]);
+                if (deviceType === 'iphone') child.material.color.convertSRGBToLinear();
             }
         }
     });
@@ -219,12 +228,18 @@ function loadPhoneModel() {
     if (phoneModelLoading) return; // Prevent double loading
     phoneModelLoading = true;
 
-    const config = deviceConfigs[currentDeviceModel] || deviceConfigs.iphone;
-    const loader = new THREE.GLTFLoader();
+    const deviceType = currentDeviceModel;
+    const loadId = ++activeModelLoadId;
+    const config = deviceConfigs[deviceType] || deviceConfigs.iphone;
+    const loader = createDeviceModelLoader(deviceType);
 
     loader.load(
         config.modelPath,
         (gltf) => {
+            if (loadId !== activeModelLoadId) {
+                disposePhoneModel(gltf.scene);
+                return;
+            }
             phoneModelLoading = false;
             phoneModel = gltf.scene;
 
@@ -318,10 +333,8 @@ function loadPhoneModel() {
                 const rotation3D = ss?.rotation3D || { x: 0, y: 0, z: 0 };
                 setThreeJSRotation(rotation3D.x, rotation3D.y, rotation3D.z);
 
-                // Apply frame color
-                if (ss?.frameColor) {
-                    setPhoneFrameColor(ss.frameColor, currentDeviceModel);
-                }
+                // Apply the default finish too, including for older saved projects.
+                setPhoneFrameColor(ss?.frameColor, currentDeviceModel);
 
                 // Apply screenshot texture
                 if (state.screenshots.length > 0) {
@@ -341,6 +354,8 @@ function loadPhoneModel() {
             console.log('Loading phone model... ' + percent + '%');
         },
         (error) => {
+            if (loadId !== activeModelLoadId) return;
+            phoneModelLoading = false;
             console.error('Error loading phone model:', error);
         }
     );
@@ -365,12 +380,7 @@ function switchPhoneModel(deviceType) {
     // Remove current pivot (which contains the model) from scene
     if (phonePivot && threeScene) {
         threeScene.remove(phonePivot);
-        phonePivot.traverse((child) => {
-            if (child.isMesh) {
-                child.geometry?.dispose();
-                child.material?.dispose();
-            }
-        });
+        disposePhoneModel(phonePivot);
         phonePivot = null;
         phoneModel = null;
     }
@@ -388,13 +398,20 @@ function switchPhoneModel(deviceType) {
     screenMesh = null;
     phoneModelLoaded = false;
 
-    // Load new model using the config
+    // Ignore stale loads after rapid device switches.
+    phoneModelLoading = true;
+    const loadId = ++activeModelLoadId;
     const config = deviceConfigs[currentDeviceModel];
-    const loader = new THREE.GLTFLoader();
+    const loader = createDeviceModelLoader(deviceType);
 
     loader.load(
         config.modelPath,
         (gltf) => {
+            if (loadId !== activeModelLoadId) {
+                disposePhoneModel(gltf.scene);
+                return;
+            }
+            phoneModelLoading = false;
             phoneModel = gltf.scene;
 
             // Center and scale the model
@@ -434,10 +451,7 @@ function switchPhoneModel(deviceType) {
                 const rotation3D = ss?.rotation3D || { x: 0, y: 0, z: 0 };
                 setThreeJSRotation(rotation3D.x, rotation3D.y, rotation3D.z);
 
-                // Apply frame color
-                if (ss?.frameColor) {
-                    setPhoneFrameColor(ss.frameColor, currentDeviceModel);
-                }
+                setPhoneFrameColor(ss?.frameColor, currentDeviceModel);
 
                 if (state.screenshots.length > 0) {
                     updateScreenTexture();
@@ -456,6 +470,8 @@ function switchPhoneModel(deviceType) {
             console.log('Loading ' + deviceType + ' model... ' + percent + '%');
         },
         (error) => {
+            if (loadId !== activeModelLoadId) return;
+            phoneModelLoading = false;
             console.error('Error loading ' + deviceType + ' model:', error);
         }
     );
@@ -474,7 +490,7 @@ function loadCachedPhoneModel(deviceType) {
     }
 
     const config = deviceConfigs[deviceType];
-    const loader = new THREE.GLTFLoader();
+    const loader = createDeviceModelLoader(deviceType);
 
     phoneModelCache[deviceType] = { loading: true, loaded: false };
 
@@ -609,8 +625,14 @@ function createScreenOverlay() {
 }
 
 // Create a rounded corner version of the screenshot
-function createRoundedScreenImage(image, cornerRadius) {
+function createRoundedScreenImage(image, cornerRadius, deviceType) {
     const canvas = document.createElement('canvas');
+    if (deviceType === 'iphone') {
+        canvas.width = iPhone17ProMax.pixelWidth;
+        canvas.height = iPhone17ProMax.pixelHeight;
+        drawIPhone17Screen(canvas.getContext('2d'), image, 0, 0, canvas.width, canvas.height);
+        return canvas;
+    }
     canvas.width = image.width;
     canvas.height = image.height;
     const ctx = canvas.getContext('2d');
@@ -659,7 +681,7 @@ function updateScreenTexture() {
     // Create rounded corner version of the image using device-specific corner radius
     const config = deviceConfigs[currentDeviceModel] || deviceConfigs.iphone;
     const cornerRadius = Math.round(screenshotImage.width * config.cornerRadiusFactor);
-    const roundedImage = createRoundedScreenImage(screenshotImage, cornerRadius);
+    const roundedImage = createRoundedScreenImage(screenshotImage, cornerRadius, currentDeviceModel);
 
     screenTexture = new THREE.Texture(roundedImage);
     screenTexture.needsUpdate = true;
@@ -871,7 +893,7 @@ function renderThreeJSForScreenshot(targetCanvas, width, height, screenshotIndex
     const oldMaterial = screenPlaneToUse ? screenPlaneToUse.material : null;
     if (screenshotImage && screenPlaneToUse) {
         const cornerRadius = Math.round(screenshotImage.width * config.cornerRadiusFactor);
-        const roundedImage = createRoundedScreenImage(screenshotImage, cornerRadius);
+        const roundedImage = createRoundedScreenImage(screenshotImage, cornerRadius, screenshotDeviceType);
         const newTexture = new THREE.Texture(roundedImage);
         newTexture.needsUpdate = true;
         newTexture.encoding = THREE.sRGBEncoding;
@@ -885,13 +907,11 @@ function renderThreeJSForScreenshot(targetCanvas, width, height, screenshotIndex
         screenPlaneToUse.material = newMaterial;
     }
 
-    // Apply frame color for this screenshot
-    if (ss.frameColor) {
-        if (useCurrentModel) {
-            setPhoneFrameColor(ss.frameColor, screenshotDeviceType);
-        } else {
-            setCachedModelFrameColor(ss.frameColor, screenshotDeviceType);
-        }
+    // Always apply a finish so side previews cannot inherit a neighbor's color.
+    if (useCurrentModel) {
+        setPhoneFrameColor(ss.frameColor, screenshotDeviceType);
+    } else {
+        setCachedModelFrameColor(ss.frameColor, screenshotDeviceType);
     }
 
     // Apply rotation for this screenshot + model base rotation
@@ -956,11 +976,9 @@ function renderThreeJSForScreenshot(targetCanvas, width, height, screenshotIndex
     }
 
     // Restore frame color on current model if we changed it
-    if (useCurrentModel && ss.frameColor && typeof state !== 'undefined') {
+    if (useCurrentModel && typeof state !== 'undefined') {
         const currentSS = typeof getScreenshotSettings === 'function' ? getScreenshotSettings() : null;
-        if (currentSS?.frameColor) {
-            setPhoneFrameColor(currentSS.frameColor, currentDeviceModel);
-        }
+        setPhoneFrameColor(currentSS?.frameColor, currentDeviceModel);
     }
 
     // Clean up: remove cached model from scene and restore current model visibility

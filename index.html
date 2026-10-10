@@ -606,12 +606,20 @@
                     </div>
                 </div>
 
+                <div class="control-group" id="device-2d-options">
+                    <label class="control-label">Device Frame</label>
+                    <div class="btn-group" id="device-2d-selector">
+                        <button class="active" data-model="none">None</button>
+                        <button data-model="iphone">iPhone 17 Pro Max</button>
+                    </div>
+                </div>
+
                 <div id="rotation-3d-options" style="display: none;">
                     <div class="control-group">
                         <label class="control-label">Device Model</label>
                         <div class="btn-group" id="device-3d-selector">
-                            <button class="active" data-model="iphone">iPhone</button>
-                            <button data-model="samsung">Samsung</button>
+                            <button class="active" data-model="iphone">iPhone 17 Pro Max</button>
+                            <button data-model="samsung">Galaxy S25 Ultra</button>
                         </div>
                     </div>
                     <div class="control-group">
@@ -736,7 +744,7 @@
                 <div id="2d-only-settings">
                     <div class="divider"></div>
 
-                    <div class="control-group">
+                    <div class="control-group" id="corner-radius-group">
                         <label class="control-label">Corner Radius</label>
                         <div class="control-row">
                             <input type="range" id="corner-radius" min="0" max="100" value="24">
@@ -806,6 +814,7 @@
 
                 <div class="divider"></div>
 
+                <div id="screenshot-border-settings">
                 <div class="control-group">
                     <div class="toggle-row collapsible collapsed" data-target="frame-options">
                         <span class="toggle-label">
@@ -841,6 +850,7 @@
                         </div>
                     </div>
                 </div>
+                </div><!-- end screenshot-border-settings -->
                 </div><!-- end 2d-only-settings -->
 
                 <div id="3d-tip" class="tip-box" style="display: none;">
@@ -2084,6 +2094,7 @@
     <script src="language-utils.js"></script>
     <script src="magical-titles.js"></script>
     <script src="lucide-icons.js"></script>
+    <script src="device-frames.js"></script>
     <script src="three-renderer.js"></script>
     <script src="app.js"></script>
 </body>

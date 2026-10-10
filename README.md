@@ -26,8 +26,9 @@ A free, open-source tool for creating beautiful App Store screenshots with custo
 - **Noise Overlay**: Add subtle noise texture to any background
 
 ### Device Mockups
-- **2D Mode**: Position, scale, rotate, and adjust corner radius of screenshots
-- **3D Mode**: Interactive iPhone 15 Pro Max 3D mockup with drag-to-rotate
+- **2D Mode**: Optional iPhone 17 Pro Max frame with matching proportions, bezels, side buttons, and Dynamic Island; frameless screenshots retain their adjustable corners and borders
+- **3D Mode**: Interactive iPhone 17 Pro Max and Galaxy S25 Ultra mockups with drag-to-rotate
+- **iPhone Finishes**: Silver, Cosmic Orange, and Deep Blue in both 2D and 3D
 - **Position Presets**: Centered, bleed, tilt left/right, perspective, and more
 - **Shadow Effects**: Customizable drop shadows with color, blur, opacity, and offset
 - **Border Effects**: Add borders around screenshots with adjustable width and opacity
@@ -144,6 +145,10 @@ If you want to build the image yourself:
 docker compose -f docker-compose.build.yml up -d
 ```
 
+### Frame Regression Tests
+
+Run `node --test tests/device-frames.test.js` to check frame dimensions, legacy finish mapping, cover-cropping, and canvas transforms (no dependencies required).
+
 ## Usage
 
 1. **Upload Screenshots**: Drag and drop your app screenshots or click to browse
@@ -198,9 +203,11 @@ Built something with this tool? Add your app to the list by submitting a pull re
 MIT License - feel free to use, modify, and distribute.
 
 ## Credits
+- **iPhone 17 Pro Max mockup**: Original, locally generated geometry in `device-frames.js`, shared with the 2D frame. A lightweight approximation, not an Apple CAD model. Body dimensions and display resolution follow [Apple's specifications](https://support.apple.com/en-us/125091); no additional model download is needed.
+
 - **Samsung Galaxy S25 Ultra 3D Model** by [mistJS](https://sketchfab.com/mistjs) - Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
-- **iPhone 15 Pro Max 3D Model** by [MajdyModels](https://sketchfab.com/majdymodels) - Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+- **Legacy iPhone 15 Pro Max 3D asset** (retained in `models/`, no longer the default) by [MajdyModels](https://sketchfab.com/majdymodels) - Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
 ## Author
 
