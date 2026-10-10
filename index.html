@@ -1663,7 +1663,7 @@
     </div>
 
     <!-- Apply Style to All Confirmation Modal -->
-    <div class="modal-overlay" id="apply-style-modal">
+    <div class="modal-overlay" id="apply-style-modal" role="dialog" aria-modal="true" aria-labelledby="apply-style-title">
         <div class="modal">
             <div class="modal-icon" style="background: rgba(10, 132, 255, 0.2);">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent);">
@@ -1671,11 +1671,20 @@
                     <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                 </svg>
             </div>
-            <h3 class="modal-title">Apply Style to All?</h3>
-            <p class="modal-message">This will copy the background, device, and text settings from this screenshot to all other screenshots. This cannot be undone.</p>
+            <h3 class="modal-title" id="apply-style-title">Apply styles to all</h3>
+            <p class="modal-message" id="apply-style-message" role="status"></p>
+            <fieldset class="apply-style-options">
+                <legend>Styles to copy</legend>
+                <label><input type="checkbox" id="apply-style-select-all"> Select all</label>
+                <label><input type="checkbox" data-style-category="background" checked> Background <small>Colors, gradients, image, overlays, blur, and noise</small></label>
+                <label><input type="checkbox" data-style-category="text" checked> Text <small>Fonts, sizes, colors, positioning, and effects</small></label>
+                <label><input type="checkbox" data-style-category="device"> Device <small>2D/3D mode, position, scale, rotation, shadow, and border</small></label>
+            </fieldset>
+            <p class="modal-message">Current project only, across all languages. Wording, translations, screenshot images, and added elements stay unchanged.</p>
             <div class="modal-buttons">
                 <button class="modal-btn modal-btn-cancel" id="apply-style-cancel">Cancel</button>
-                <button class="modal-btn modal-btn-confirm" id="apply-style-confirm" style="background: var(--accent);">Apply to All</button>
+                <button class="modal-btn modal-btn-confirm" id="apply-style-confirm" style="background: var(--accent);">Apply styles</button>
+                <button class="modal-btn" id="apply-style-undo" hidden>Undo</button>
             </div>
         </div>
     </div>

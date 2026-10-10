@@ -4474,9 +4474,16 @@ function setupEventListeners() {
         document.getElementById('apply-style-modal').classList.remove('visible');
     });
 
-    document.getElementById('apply-style-confirm').addEventListener('click', () => {
-        applyStyleToAll();
-        document.getElementById('apply-style-modal').classList.remove('visible');
+    document.getElementById('apply-style-confirm').addEventListener('click', applyStyleToAll);
+    document.getElementById('apply-style-undo').addEventListener('click', undoAppliedStyles);
+    document.querySelectorAll('[data-style-category]').forEach(input => {
+        input.addEventListener('change', updateApplyStyleSelection);
+    });
+    document.getElementById('apply-style-select-all').addEventListener('change', (event) => {
+        document.querySelectorAll('[data-style-category]').forEach(input => {
+            input.checked = event.target.checked;
+        });
+        updateApplyStyleSelection();
     });
 
     // Close modals on overlay click
@@ -7021,7 +7028,7 @@ function updateScreenshotList() {
                             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
                             <path d="M14 14l2 2 4-4"/>
                         </svg>
-                        Apply style to all...
+                        Apply styles to all...
                     </button>
                     <button class="screenshot-menu-item screenshot-duplicate" data-index="${index}">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -7384,14 +7391,83 @@ function transferStyle(sourceIndex, targetIndex) {
 
 // Track which screenshot to apply style from
 let applyStyleSourceIndex = null;
+let applyStyleScreenshots = null;
+let appliedStyleUndo = null;
+
+function updateApplyStyleSelection() {
+    const inputs = [...document.querySelectorAll('[data-style-category]')];
+    const checked = inputs.filter(input => input.checked).length;
+    const selectAll = document.getElementById('apply-style-select-all');
+    selectAll.checked = checked === inputs.length;
+    selectAll.indeterminate = checked > 0 && checked < inputs.length;
+    document.getElementById('apply-style-confirm').disabled = checked === 0 || state.screenshots.length < 2;
+}
 
 function showApplyStyleModal(sourceIndex) {
+    if (!state.screenshots[sourceIndex]) return;
     applyStyleSourceIndex = sourceIndex;
+    applyStyleScreenshots = state.screenshots;
+    appliedStyleUndo = null;
+    document.querySelectorAll('[data-style-category]').forEach(input => {
+        input.checked = input.dataset.styleCategory !== 'device';
+        input.disabled = false;
+    });
+    document.getElementById('apply-style-select-all').disabled = false;
+    document.getElementById('apply-style-confirm').hidden = false;
+    document.getElementById('apply-style-undo').hidden = true;
+    document.getElementById('apply-style-cancel').textContent = 'Cancel';
+    const count = state.screenshots.length - 1;
+    document.getElementById('apply-style-message').textContent = `Apply selected styles to the other ${count} screenshot${count === 1 ? '' : 's'}?`;
+    updateApplyStyleSelection();
     document.getElementById('apply-style-modal').classList.add('visible');
+    document.getElementById('apply-style-cancel').focus();
+}
+
+function copySelectedStyles(source, target, categories) {
+    if (categories.includes('background')) target.background = cloneBackground(source.background);
+    if (categories.includes('device')) target.screenshot = JSON.parse(JSON.stringify(source.screenshot));
+    if (categories.includes('text')) {
+        const text = JSON.parse(JSON.stringify(source.text));
+        // Language content and editor language selections belong to the target.
+        for (const key of ['headlines', 'subheadlines', 'headlineLanguages', 'subheadlineLanguages',
+            'currentHeadlineLang', 'currentSubheadlineLang', 'currentLayoutLang']) {
+            if (key in target.text) text[key] = target.text[key];
+            else delete text[key];
+        }
+        // Use the source's visible layout consistently across every language.
+        const layout = getEffectiveLayout(JSON.parse(JSON.stringify(source.text)), state.currentLanguage);
+        Object.assign(text, layout);
+        text.perLanguageLayout = false;
+        text.languageSettings = Object.fromEntries(
+            [...new Set([...state.projectLanguages, ...Object.keys(text.headlines || {}),
+                ...Object.keys(text.subheadlines || {})])].map(lang => [lang, { ...layout }])
+        );
+        target.text = text;
+    }
+}
+
+function refreshAppliedStyles() {
+    updateScreenshotList();
+    syncUIWithState();
+    updateGradientStopsUI();
+    updateCanvas();
+}
+
+function undoAppliedStyles() {
+    if (!appliedStyleUndo || state.screenshots !== applyStyleScreenshots) return;
+    appliedStyleUndo.forEach(({ target, settings }) => {
+        if (state.screenshots.includes(target)) Object.assign(target, settings);
+    });
+    appliedStyleUndo = null;
+    refreshAppliedStyles();
+    document.getElementById('apply-style-modal').classList.remove('visible');
 }
 
 function applyStyleToAll() {
-    if (applyStyleSourceIndex === null) return;
+    if (applyStyleSourceIndex === null || state.screenshots !== applyStyleScreenshots) return;
+    const categories = [...document.querySelectorAll('[data-style-category]:checked')]
+        .map(input => input.dataset.styleCategory);
+    if (!categories.length || state.screenshots.length < 2) return;
 
     const source = state.screenshots[applyStyleSourceIndex];
     if (!source) {
@@ -7399,82 +7475,25 @@ function applyStyleToAll() {
         return;
     }
 
-    // Apply style to all other screenshots
+    appliedStyleUndo = [];
     state.screenshots.forEach((target, index) => {
-        if (index === applyStyleSourceIndex) return; // Skip source
-
-        // Deep copy background settings (keeps the live background image)
-        target.background = cloneBackground(source.background);
-
-        // Deep copy screenshot settings
-        target.screenshot = JSON.parse(JSON.stringify(source.screenshot));
-
-        // Copy text styling but preserve actual text content
-        const targetHeadlines = target.text.headlines;
-        const targetSubheadlines = target.text.subheadlines;
-        target.text = JSON.parse(JSON.stringify(source.text));
-        // Restore original text content
-        target.text.headlines = targetHeadlines;
-        target.text.subheadlines = targetSubheadlines;
-
-        // Deep copy elements
-        target.elements = (source.elements || []).map(el => {
-            const copy = JSON.parse(JSON.stringify({ ...el, image: undefined }));
-            if (el.type === 'graphic' && el.image) {
-                copy.image = el.image;
-            } else if (el.type === 'icon' && el.image) {
-                copy.image = el.image;
-            }
-            copy.id = crypto.randomUUID();
-            return copy;
-        });
-
-        // Deep copy per-language graphic overrides while keeping the target's
-        // localized popout layouts intact.
-        const targetLocalizedPopouts = getLocalizedPopoutState(target);
-        target.localizedElements = {};
-        if (source.localizedElements) {
-            Object.keys(source.localizedElements).forEach(lang => {
-                const entry = source.localizedElements[lang];
-                if (!entry) return;
-                const srcGraphics = Array.isArray(entry.graphics)
-                    ? entry.graphics
-                    : (Array.isArray(entry.elements) ? entry.elements : []);
-                target.localizedElements[lang] = {
-                    linked: entry.linked !== false,
-                    graphics: srcGraphics.map(el => {
-                        const copy = JSON.parse(JSON.stringify({ ...el, image: undefined }));
-                        if (el.type === 'graphic' && el.image) {
-                            copy.image = el.image;
-                        }
-                        copy.id = crypto.randomUUID();
-                        return copy;
-                    }),
-                    popoutsLinked: targetLocalizedPopouts[lang]?.popoutsLinked !== false,
-                    popouts: targetLocalizedPopouts[lang]?.popouts || []
-                };
-            });
-        }
-        Object.keys(targetLocalizedPopouts).forEach(lang => {
-            if (target.localizedElements[lang]) return;
-            target.localizedElements[lang] = {
-                linked: true,
-                graphics: [],
-                popoutsLinked: targetLocalizedPopouts[lang].popoutsLinked,
-                popouts: targetLocalizedPopouts[lang].popouts
-            };
-        });
-
-        // Explicitly skip popouts — crop regions are specific to each screenshot's source image
+        if (index === applyStyleSourceIndex) return;
+        const settings = {};
+        if (categories.includes('background')) settings.background = target.background;
+        if (categories.includes('device')) settings.screenshot = target.screenshot;
+        if (categories.includes('text')) settings.text = target.text;
+        appliedStyleUndo.push({ target, settings });
+        copySelectedStyles(source, target, categories);
     });
 
     applyStyleSourceIndex = null;
-
-    // Update UI
-    updateScreenshotList();
-    syncUIWithState();
-    updateGradientStopsUI();
-    updateCanvas();
+    refreshAppliedStyles();
+    document.getElementById('apply-style-message').textContent = 'Styles applied. You can undo this change before closing this dialog.';
+    document.querySelectorAll('[data-style-category], #apply-style-select-all').forEach(input => { input.disabled = true; });
+    document.getElementById('apply-style-confirm').hidden = true;
+    document.getElementById('apply-style-undo').hidden = false;
+    document.getElementById('apply-style-cancel').textContent = 'Done';
+    document.getElementById('apply-style-undo').focus();
 }
 
 // Replace screenshot image via file picker
